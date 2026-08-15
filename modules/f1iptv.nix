@@ -1,6 +1,10 @@
 # NixOS module for the F1 IPTV proxy. Configure via services.f1iptv.* and
 # enable the service. The default `package` is the flake's own f1iptv build.
-{ config, lib, pkgs, package }:
+{
+  config,
+  lib,
+  package,
+}:
 
 let
   cfg = config.services.f1iptv;
@@ -60,7 +64,12 @@ in
     };
 
     logLevel = lib.mkOption {
-      type = lib.types.enum [ "debug" "info" "warn" "error" ];
+      type = lib.types.enum [
+        "debug"
+        "info"
+        "warn"
+        "error"
+      ];
       default = "info";
       description = "Log verbosity (F1IPTV_LOG_LEVEL).";
     };

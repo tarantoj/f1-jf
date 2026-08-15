@@ -23,8 +23,11 @@
       # via git to an empty tree.
       src = nixpkgs.lib.cleanSourceWith {
         src = ./.;
-        filter = p: type:
-          let base = baseNameOf (toString p); in
+        filter =
+          p: _:
+          let
+            base = baseNameOf (toString p);
+          in
           !(builtins.elem base [
             ".git"
             "docs"
@@ -43,9 +46,16 @@
         system:
         let
           pkgs = nixpkgs.legacyPackages.${system};
-          build = pname: description: subPackages:
+          build =
+            pname: description: subPackages:
             pkgs.buildGoModule {
-              inherit pname version src subPackages description;
+              inherit
+                pname
+                version
+                src
+                subPackages
+                description
+                ;
               vendorHash = null; # no external Go dependencies
               meta.mainProgram = pname;
             };
@@ -68,7 +78,10 @@
         in
         {
           default = pkgs.mkShell {
-            packages = [ pkgs.go pkgs.git ];
+            packages = [
+              pkgs.go
+              pkgs.git
+            ];
             shellHook = ''
               go version
             '';
@@ -78,9 +91,15 @@
 
       # The module is a function of the NixOS module arguments so it can close
       # over the flake's own f1iptv package as the default.
-      nixosModules.default = { config, lib, pkgs, ... }:
+      nixosModules.default =
+        {
+          config,
+          lib,
+          pkgs,
+          ...
+        }:
         import ./modules/f1iptv.nix {
-          inherit config lib pkgs;
+          inherit config lib;
           package = self.packages.${pkgs.stdenv.hostPlatform.system}.f1iptv;
         };
 
