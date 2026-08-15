@@ -70,8 +70,9 @@ func run() error {
 		EPG:    epgSvc,
 	})
 
+	addr := cfg.Addr()
 	httpServer := &http.Server{
-		Addr:              cfg.Listen,
+		Addr:              addr,
 		Handler:           server.Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
@@ -82,8 +83,8 @@ func run() error {
 	errCh := make(chan error, 1)
 	go func() {
 		logger.Info("listening",
-			"addr", cfg.Listen,
-			"playlist", playlistURL(cfg.BaseURL, cfg.Listen),
+			"addr", addr,
+			"playlist", playlistURL(cfg.BaseURL, addr),
 			"channels", len(channels))
 		errCh <- httpServer.ListenAndServe()
 	}()

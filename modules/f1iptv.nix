@@ -20,10 +20,17 @@ in
       description = "The f1iptv package to run.";
     };
 
-    listen = lib.mkOption {
+    host = lib.mkOption {
       type = lib.types.str;
-      default = ":8080";
-      description = "Address to listen on (F1IPTV_LISTEN).";
+      default = "";
+      example = "127.0.0.1";
+      description = "Address to bind (F1IPTV_HOST); empty binds all interfaces.";
+    };
+
+    port = lib.mkOption {
+      type = lib.types.port;
+      default = 8080;
+      description = "Port to listen on (F1IPTV_PORT).";
     };
 
     qualities = lib.mkOption {
@@ -128,7 +135,8 @@ in
       };
 
       environment = {
-        F1IPTV_LISTEN = cfg.listen;
+        F1IPTV_HOST = cfg.host;
+        F1IPTV_PORT = toString cfg.port;
         F1IPTV_QUALITIES = cfg.qualities;
         F1IPTV_SOURCE_URL = cfg.sourceURL;
         F1IPTV_BASE_URL = cfg.baseURL;
@@ -143,10 +151,6 @@ in
       };
     };
 
-    networking.firewall.allowedTCPPorts = lib.mkIf cfg.openFirewall (
-      lib.optional (builtins.match ".*:([0-9]+)" cfg.listen != null) (
-        lib.toInt (builtins.elemAt (builtins.match ".*:([0-9]+)" cfg.listen) 0)
-      )
-    );
+    networking.firewall.allowedTCPPorts = lib.mkIf cfg.openFirewall [ cfg.port ];
   };
 }

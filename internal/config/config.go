@@ -4,6 +4,7 @@ package config
 
 import (
 	"fmt"
+	"net"
 	"os"
 	"strconv"
 	"time"
@@ -11,7 +12,8 @@ import (
 
 // Config holds the service configuration.
 type Config struct {
-	Listen         string        // F1IPTV_LISTEN
+	Host           string        // F1IPTV_HOST (bind address; empty = all interfaces)
+	Port           int           // F1IPTV_PORT (default 8080)
 	Qualities      string        // F1IPTV_QUALITIES (comma-separated)
 	SourceURL      string        // F1IPTV_SOURCE_URL
 	BaseURL        string        // F1IPTV_BASE_URL (empty = derive from request Host)
@@ -24,6 +26,11 @@ type Config struct {
 	EPGAPIURL  string        // F1IPTV_EPG_API_URL
 	EPGTTL     time.Duration // F1IPTV_EPG_TTL (how long to cache the season calendar)
 	EPGYear    int           // F1IPTV_EPG_YEAR (0 = current year)
+}
+
+// Addr returns the full listen address host:port.
+func (c *Config) Addr() string {
+	return net.JoinHostPort(c.Host, strconv.Itoa(c.Port))
 }
 
 // Load reads configuration from the environment, applying defaults for any
@@ -49,8 +56,13 @@ func Load() (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
+	port, err := intVar("F1IPTV_PORT", 8080)
+	if err != nil {
+		return nil, err
+	}
 	return &Config{
-		Listen:         str("F1IPTV_LISTEN", ":8080"),
+		Host:           str("F1IPTV_HOST", ""),
+		Port:           port,
 		Qualities:      str("F1IPTV_QUALITIES", "1080p,720p"),
 		SourceURL:      str("F1IPTV_SOURCE_URL", "https://streamfree.top/embed/racing/skyf1"),
 		BaseURL:        str("F1IPTV_BASE_URL", ""),

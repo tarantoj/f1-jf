@@ -6,7 +6,8 @@ import (
 )
 
 func TestLoadDefaults(t *testing.T) {
-	t.Setenv("F1IPTV_LISTEN", "")
+	t.Setenv("F1IPTV_HOST", "")
+	t.Setenv("F1IPTV_PORT", "")
 	t.Setenv("F1IPTV_QUALITIES", "")
 	t.Setenv("F1IPTV_SOURCE_URL", "")
 	t.Setenv("F1IPTV_BASE_URL", "")
@@ -23,8 +24,14 @@ func TestLoadDefaults(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if cfg.Listen != ":8080" {
-		t.Errorf("Listen = %q", cfg.Listen)
+	if cfg.Host != "" {
+		t.Errorf("Host = %q", cfg.Host)
+	}
+	if cfg.Port != 8080 {
+		t.Errorf("Port = %d, want 8080", cfg.Port)
+	}
+	if cfg.Addr() != ":8080" {
+		t.Errorf("Addr() = %q, want :8080", cfg.Addr())
 	}
 	if cfg.Qualities != "1080p,720p" {
 		t.Errorf("Qualities = %q", cfg.Qualities)
@@ -62,7 +69,8 @@ func TestLoadDefaults(t *testing.T) {
 }
 
 func TestLoadOverrides(t *testing.T) {
-	t.Setenv("F1IPTV_LISTEN", ":9999")
+	t.Setenv("F1IPTV_HOST", "")
+	t.Setenv("F1IPTV_PORT", "9999")
 	t.Setenv("F1IPTV_QUALITIES", "720p")
 	t.Setenv("F1IPTV_SOURCE_URL", "https://example.com/embed")
 	t.Setenv("F1IPTV_BASE_URL", "https://f1.example.com")
@@ -79,7 +87,7 @@ func TestLoadOverrides(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	if cfg.Listen != ":9999" || cfg.Qualities != "720p" ||
+	if cfg.Addr() != ":9999" || cfg.Port != 9999 || cfg.Qualities != "720p" ||
 		cfg.SourceURL != "https://example.com/embed" ||
 		cfg.BaseURL != "https://f1.example.com" ||
 		cfg.Group != "Racing" ||
@@ -92,6 +100,29 @@ func TestLoadOverrides(t *testing.T) {
 	}
 	if cfg.EPGAPIURL != "https://epg.example.com/v1" || cfg.EPGTTL != time.Hour || cfg.EPGYear != 2025 {
 		t.Errorf("unexpected epg config: %+v", cfg)
+	}
+}
+
+func TestLoadHostPort(t *testing.T) {
+	t.Setenv("F1IPTV_HOST", "127.0.0.1")
+	t.Setenv("F1IPTV_PORT", "9000")
+
+	cfg, err := Load()
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	if cfg.Addr() != "127.0.0.1:9000" {
+		t.Errorf("Addr() = %q, want 127.0.0.1:9000", cfg.Addr())
+	}
+	if cfg.Host != "127.0.0.1" || cfg.Port != 9000 {
+		t.Errorf("Host/Port = %q/%d", cfg.Host, cfg.Port)
+	}
+}
+
+func TestLoadInvalidPort(t *testing.T) {
+	t.Setenv("F1IPTV_PORT", "http")
+	if _, err := Load(); err == nil {
+		t.Fatal("expected error for invalid port")
 	}
 }
 
