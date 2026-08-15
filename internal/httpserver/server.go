@@ -70,7 +70,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /readyz", s.handleReady)
 	mux.HandleFunc("GET /iptv/playlist.m3u", s.handlePlaylist)
 	mux.HandleFunc("GET /iptv/stream/{channel}", s.handleStream)
-	mux.HandleFunc("GET /iptv/f/{channel}", s.handleFetch)
+	mux.HandleFunc("GET /iptv/f/{channel}/{path...}", s.handleFetch)
 	mux.HandleFunc("GET /iptv/guide.xml", s.handleGuide)
 	return withMiddleware(s.log, mux)
 }

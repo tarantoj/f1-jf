@@ -278,7 +278,7 @@ func TestStreamPlaylistRewrite(t *testing.T) {
 	body, _ := io.ReadAll(resp.Body)
 	text := string(body)
 
-	wantSeg := ts.URL + "/iptv/f/f1-1080p?u=" + url.QueryEscape(up.URL+"/live/skyf11080p/1.js")
+	wantSeg := ts.URL + "/iptv/f/f1-1080p/stream.ts?u=" + url.QueryEscape(up.URL+"/live/skyf11080p/1.js")
 	if !strings.Contains(text, wantSeg) {
 		t.Errorf("segment 1 not rewritten to proxy:\n%s", text)
 	}
@@ -292,7 +292,7 @@ func TestSegmentPassthrough(t *testing.T) {
 		return map[string]*f1net.Stream{"1080p": streamFor(up, "1080p")}
 	}, nil)
 
-	segURL := ts.URL + "/iptv/f/f1-1080p?u=" + url.QueryEscape(up.URL+"/live/skyf11080p/2.js")
+	segURL := ts.URL + "/iptv/f/f1-1080p/stream.ts?u=" + url.QueryEscape(up.URL+"/live/skyf11080p/2.js")
 	resp, err := http.Get(segURL)
 	if err != nil {
 		t.Fatal(err)
@@ -315,7 +315,7 @@ func TestSegmentRange(t *testing.T) {
 		return map[string]*f1net.Stream{"1080p": streamFor(up, "1080p")}
 	}, nil)
 
-	segURL := ts.URL + "/iptv/f/f1-1080p?u=" + url.QueryEscape(up.URL+"/live/skyf11080p/1.js")
+	segURL := ts.URL + "/iptv/f/f1-1080p/stream.ts?u=" + url.QueryEscape(up.URL+"/live/skyf11080p/1.js")
 	req, _ := http.NewRequest(http.MethodGet, segURL, nil)
 	req.Header.Set("Range", "bytes=0-3")
 	resp, err := up.Client().Do(req)

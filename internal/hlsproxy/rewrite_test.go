@@ -23,17 +23,17 @@ func TestRewritePlaylistRelative(t *testing.T) {
 		"https://streamfree.top/live/skyf11080p/index.m3u8",
 		"http://h:8080", "f1-1080p"))
 
-	wantSeg := "http://h:8080/iptv/f/f1-1080p?u=" + url.QueryEscape("https://streamfree.top/live/skyf11080p/10.js")
+	wantSeg := "http://h:8080/iptv/f/f1-1080p/stream.ts?u=" + url.QueryEscape("https://streamfree.top/live/skyf11080p/10.js")
 	if !strings.Contains(got, wantSeg) {
 		t.Errorf("relative segment not rewritten:\n%s", got)
 	}
 
-	wantAbs := "http://h:8080/iptv/f/f1-1080p?u=" + url.QueryEscape("https://cdn.example/seg/11.ts")
+	wantAbs := "http://h:8080/iptv/f/f1-1080p/stream.ts?u=" + url.QueryEscape("https://cdn.example/seg/11.ts")
 	if !strings.Contains(got, wantAbs) {
 		t.Errorf("absolute segment not rewritten:\n%s", got)
 	}
 
-	wantRoot := "http://h:8080/iptv/f/f1-1080p?u=" + url.QueryEscape("https://streamfree.top/tmp/12.js")
+	wantRoot := "http://h:8080/iptv/f/f1-1080p/stream.ts?u=" + url.QueryEscape("https://streamfree.top/tmp/12.js")
 	if !strings.Contains(got, wantRoot) {
 		t.Errorf("root-relative segment not rewritten:\n%s", got)
 	}
@@ -49,9 +49,26 @@ func TestRewritePlaylistKey(t *testing.T) {
 		"https://streamfree.top/live/skyf11080p/index.m3u8",
 		"http://h:8080", "f1-1080p"))
 
-	want := `URI="http://h:8080/iptv/f/f1-1080p?u=` + url.QueryEscape("https://streamfree.top/keys/k1.bin") + `"`
+	want := `URI="http://h:8080/iptv/f/f1-1080p/stream.ts?u=` + url.QueryEscape("https://streamfree.top/keys/k1.bin") + `"`
 	if !strings.Contains(got, want) {
 		t.Errorf("EXT-X-KEY URI not rewritten:\n%s", got)
+	}
+}
+
+func TestRewritePlaylistExtensionAllowed(t *testing.T) {
+	got := string(RewritePlaylist([]byte(testPlaylist),
+		"https://streamfree.top/live/skyf11080p/index.m3u8",
+		"http://h:8080", "f1-1080p"))
+
+	// Every proxied segment must end with an allowed extension (.ts) in its
+	// path so ffmpeg's HLS demuxer does not reject the obfuscated upstream
+	// extension (.js).
+	wantRel := "/iptv/f/f1-1080p/stream.ts?u=" + url.QueryEscape("https://streamfree.top/live/skyf11080p/10.js")
+	wantRoot := "/iptv/f/f1-1080p/stream.ts?u=" + url.QueryEscape("https://streamfree.top/tmp/12.js")
+	for _, want := range []string{wantRel, wantRoot} {
+		if !strings.Contains(got, want) {
+			t.Errorf("segment not proxied through .ts path:\n%s", got)
+		}
 	}
 }
 

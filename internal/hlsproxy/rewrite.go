@@ -62,12 +62,14 @@ func RewritePlaylist(content []byte, upstreamBase, pubBase, channel string) []by
 }
 
 // rewriteURI turns an HLS URI reference into an absolute URL on the proxy.
+// The path ends in /stream.ts so ffmpeg's HLS demuxer accepts the segment
+// extension (upstream segments may carry obfuscated extensions like .js).
 func rewriteURI(upstreamBase, pubBase, channel, raw string) string {
 	up := raw
 	if !strings.HasPrefix(raw, "http://") && !strings.HasPrefix(raw, "https://") {
 		up = resolveUpstream(upstreamBase, raw)
 	}
-	return pubBase + "/iptv/f/" + channel + "?u=" + url.QueryEscape(up)
+	return pubBase + "/iptv/f/" + channel + "/stream.ts?u=" + url.QueryEscape(up)
 }
 
 // resolveUpstream resolves a possibly-relative URI against a playlist URL.
