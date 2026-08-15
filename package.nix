@@ -22,7 +22,7 @@ buildGoModule {
     "cmd/f1m3u8"
   ];
 
-  vendorHash = "sha256-EOkc+y94RqcdpOOIXjjImjQBKX6SBHy5sLJmx1I4s2g=";
+  vendorHash = "sha256-33Kd9eguRaEII/YW6S2LERZHdoB238c7qq0GrPMySV0=";
 
   meta = {
     description = "F1 IPTV proxy exposing a Jellyfin M3U playlist";
