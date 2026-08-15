@@ -21,6 +21,24 @@ func (s *Server) handleReady(w http.ResponseWriter, _ *http.Request) {
 	fmt.Fprintln(w, "ready")
 }
 
+// handleGuide serves the XMLTV electronic program guide for the configured
+// channels, wired to the playlist's tvg-ids.
+func (s *Server) handleGuide(w http.ResponseWriter, r *http.Request) {
+	if s.epg == nil {
+		http.Error(w, "epg disabled", http.StatusServiceUnavailable)
+		return
+	}
+	doc, err := s.epg.RenderXML(r.Context(), s.channels)
+	if err != nil {
+		s.log.Warn("render guide", "error", err)
+		http.Error(w, "guide unavailable", http.StatusServiceUnavailable)
+		return
+	}
+	w.Header().Set("Content-Type", "application/xml; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Write(doc)
+}
+
 // handlePlaylist serves the well-formed M3U channel list consumed by
 // Jellyfin's M3U Tuner. Offline channels are omitted.
 func (s *Server) handlePlaylist(w http.ResponseWriter, r *http.Request) {

@@ -137,7 +137,8 @@ func parseRange(t *testing.T, rg string, size int) (int, int, bool) {
 // newServer wires the service to a fake resolver and returns both the test
 // HTTP server and the upstream mock. build receives the upstream mock so
 // streams can be wired to it; errs makes the given qualities fail to resolve.
-func newServer(t *testing.T, build func(up *httptest.Server) map[string]*f1net.Stream, errs map[string]error) (*httptest.Server, *httptest.Server) {
+// An optional EPGRenderer enables the guide endpoint.
+func newServer(t *testing.T, build func(up *httptest.Server) map[string]*f1net.Stream, errs map[string]error, epg ...EPGRenderer) (*httptest.Server, *httptest.Server) {
 	t.Helper()
 	up := newUpstream(t)
 	var streams map[string]*f1net.Stream
@@ -150,11 +151,25 @@ func newServer(t *testing.T, build func(up *httptest.Server) map[string]*f1net.S
 		{ID: "f1-720p", Name: "F1 720p", Group: "Sports", Quality: "720p"},
 	}
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
-	srv := New(reg, channels, Options{Logger: logger, Upstream: hlsproxy.NewClient(up.Client())})
+	opts := Options{Logger: logger, Upstream: hlsproxy.NewClient(up.Client())}
+	if len(epg) > 0 {
+		opts.EPG = epg[0]
+	}
+	srv := New(reg, channels, opts)
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)
 	t.Cleanup(up.Close)
 	return ts, up
+}
+
+// fakeEPG is a canned EPGRenderer.
+type fakeEPG struct {
+	doc []byte
+	err error
+}
+
+func (f *fakeEPG) RenderXML(_ context.Context, _ []*iptv.Channel) ([]byte, error) {
+	return f.doc, f.err
 }
 
 func streamFor(up *httptest.Server, quality string) *f1net.Stream {
@@ -341,5 +356,52 @@ func TestOfflineChannelStream(t *testing.T) {
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusServiceUnavailable {
 		t.Fatalf("status = %d", resp.StatusCode)
+	}
+}
+
+func TestGuide(t *testing.T) {
+	doc := []byte(`<?xml version="1.0" encoding="UTF-8"?>
+<tv generator-info-name="f1-jf"><channel id="f1-1080p"/></tv>
+`)
+	ts, _ := newServer(t, nil, nil, &fakeEPG{doc: doc})
+
+	resp, err := http.Get(ts.URL + "/iptv/guide.xml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d", resp.StatusCode)
+	}
+	if ct := resp.Header.Get("Content-Type"); !strings.Contains(ct, "application/xml") {
+		t.Errorf("content-type = %q", ct)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	if !strings.Contains(string(body), `<channel id="f1-1080p"/>`) {
+		t.Errorf("guide body = %q", body)
+	}
+}
+
+func TestGuideDisabled(t *testing.T) {
+	ts, _ := newServer(t, nil, nil)
+	resp, err := http.Get(ts.URL + "/iptv/guide.xml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503", resp.StatusCode)
+	}
+}
+
+func TestGuideError(t *testing.T) {
+	ts, _ := newServer(t, nil, nil, &fakeEPG{err: errors.New("unreachable")})
+	resp, err := http.Get(ts.URL + "/iptv/guide.xml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503", resp.StatusCode)
 	}
 }

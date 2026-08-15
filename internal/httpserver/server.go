@@ -5,6 +5,7 @@
 package httpserver
 
 import (
+	"context"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -24,6 +25,13 @@ type Options struct {
 	// Upstream fetches upstream playlists and segments. Defaults to a
 	// hlsproxy.Client with a 2 minute timeout.
 	Upstream *hlsproxy.Client
+	// EPG renders the XMLTV guide; when nil, /iptv/guide.xml is disabled.
+	EPG EPGRenderer
+}
+
+// EPGRenderer renders an XMLTV document for the given channels.
+type EPGRenderer interface {
+	RenderXML(ctx context.Context, channels []*iptv.Channel) ([]byte, error)
 }
 
 // Server proxies resolved F1 streams and exposes them as an IPTV playlist.
@@ -33,6 +41,7 @@ type Server struct {
 	base     string
 	log      *slog.Logger
 	upstream *hlsproxy.Client
+	epg      EPGRenderer
 }
 
 func New(registry *iptv.Registry, channels []*iptv.Channel, opts Options) *Server {
@@ -42,6 +51,7 @@ func New(registry *iptv.Registry, channels []*iptv.Channel, opts Options) *Serve
 		base:     strings.TrimRight(opts.Base, "/"),
 		log:      opts.Logger,
 		upstream: opts.Upstream,
+		epg:      opts.EPG,
 	}
 	if s.log == nil {
 		s.log = slog.Default()
@@ -61,5 +71,6 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /iptv/playlist.m3u", s.handlePlaylist)
 	mux.HandleFunc("GET /iptv/stream/{channel}", s.handleStream)
 	mux.HandleFunc("GET /iptv/f/{channel}", s.handleFetch)
+	mux.HandleFunc("GET /iptv/guide.xml", s.handleGuide)
 	return withMiddleware(s.log, mux)
 }

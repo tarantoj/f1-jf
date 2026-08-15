@@ -19,6 +19,11 @@ type Config struct {
 	ResolutionTTL  time.Duration // F1IPTV_TTL (how long to cache a resolved stream)
 	VerifyPlaylist bool          // F1IPTV_VERIFY_PLAYLIST
 	LogLevel       string        // F1IPTV_LOG_LEVEL (debug/info/warn/error)
+
+	EPGEnabled bool          // F1IPTV_EPG_ENABLED
+	EPGAPIURL  string        // F1IPTV_EPG_API_URL
+	EPGTTL     time.Duration // F1IPTV_EPG_TTL (how long to cache the season calendar)
+	EPGYear    int           // F1IPTV_EPG_YEAR (0 = current year)
 }
 
 // Load reads configuration from the environment, applying defaults for any
@@ -32,6 +37,18 @@ func Load() (*Config, error) {
 	if err != nil {
 		return nil, err
 	}
+	epgEnabled, err := boolVar("F1IPTV_EPG_ENABLED", true)
+	if err != nil {
+		return nil, err
+	}
+	epgTTL, err := duration("F1IPTV_EPG_TTL", 6*time.Hour)
+	if err != nil {
+		return nil, err
+	}
+	epgYear, err := intVar("F1IPTV_EPG_YEAR", 0)
+	if err != nil {
+		return nil, err
+	}
 	return &Config{
 		Listen:         str("F1IPTV_LISTEN", ":8080"),
 		Qualities:      str("F1IPTV_QUALITIES", "1080p,720p"),
@@ -41,6 +58,11 @@ func Load() (*Config, error) {
 		ResolutionTTL:  ttl,
 		VerifyPlaylist: verify,
 		LogLevel:       str("F1IPTV_LOG_LEVEL", "info"),
+
+		EPGEnabled: epgEnabled,
+		EPGAPIURL:  str("F1IPTV_EPG_API_URL", "https://api.openf1.org/v1"),
+		EPGTTL:     epgTTL,
+		EPGYear:    epgYear,
 	}, nil
 }
 
@@ -73,4 +95,16 @@ func boolVar(key string, def bool) (bool, error) {
 		return false, fmt.Errorf("%s: %w", key, err)
 	}
 	return b, nil
+}
+
+func intVar(key string, def int) (int, error) {
+	v := os.Getenv(key)
+	if v == "" {
+		return def, nil
+	}
+	n, err := strconv.Atoi(v)
+	if err != nil {
+		return 0, fmt.Errorf("%s: %w", key, err)
+	}
+	return n, nil
 }

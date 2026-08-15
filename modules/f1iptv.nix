@@ -74,6 +74,32 @@ in
       description = "Log verbosity (F1IPTV_LOG_LEVEL).";
     };
 
+    epgEnable = lib.mkOption {
+      type = lib.types.bool;
+      default = true;
+      description = "Serve the XMLTV guide at /iptv/guide.xml (F1IPTV_EPG_ENABLED).";
+    };
+
+    epgAPIURL = lib.mkOption {
+      type = lib.types.str;
+      default = "https://api.openf1.org/v1";
+      description = "OpenF1 API base URL for the season calendar (F1IPTV_EPG_API_URL).";
+    };
+
+    epgTTL = lib.mkOption {
+      type = lib.types.str;
+      default = "6h";
+      example = "1d";
+      description = "How long to cache the season calendar (F1IPTV_EPG_TTL).";
+    };
+
+    epgYear = lib.mkOption {
+      type = lib.types.int;
+      default = 0;
+      example = 2026;
+      description = "Season year for the guide; 0 uses the current year (F1IPTV_EPG_YEAR).";
+    };
+
     openFirewall = lib.mkOption {
       type = lib.types.bool;
       default = false;
@@ -110,6 +136,10 @@ in
         F1IPTV_TTL = cfg.ttl;
         F1IPTV_VERIFY_PLAYLIST = if cfg.verifyPlaylist then "true" else "false";
         F1IPTV_LOG_LEVEL = cfg.logLevel;
+        F1IPTV_EPG_ENABLED = if cfg.epgEnable then "true" else "false";
+        F1IPTV_EPG_API_URL = cfg.epgAPIURL;
+        F1IPTV_EPG_TTL = cfg.epgTTL;
+        F1IPTV_EPG_YEAR = toString cfg.epgYear;
       };
     };
 

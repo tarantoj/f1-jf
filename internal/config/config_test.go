@@ -14,6 +14,10 @@ func TestLoadDefaults(t *testing.T) {
 	t.Setenv("F1IPTV_TTL", "")
 	t.Setenv("F1IPTV_VERIFY_PLAYLIST", "")
 	t.Setenv("F1IPTV_LOG_LEVEL", "")
+	t.Setenv("F1IPTV_EPG_ENABLED", "")
+	t.Setenv("F1IPTV_EPG_API_URL", "")
+	t.Setenv("F1IPTV_EPG_TTL", "")
+	t.Setenv("F1IPTV_EPG_YEAR", "")
 
 	cfg, err := Load()
 	if err != nil {
@@ -43,6 +47,18 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.LogLevel != "info" {
 		t.Errorf("LogLevel = %q", cfg.LogLevel)
 	}
+	if !cfg.EPGEnabled {
+		t.Error("EPGEnabled = false, want true")
+	}
+	if cfg.EPGAPIURL != "https://api.openf1.org/v1" {
+		t.Errorf("EPGAPIURL = %q", cfg.EPGAPIURL)
+	}
+	if cfg.EPGTTL != 6*time.Hour {
+		t.Errorf("EPGTTL = %v", cfg.EPGTTL)
+	}
+	if cfg.EPGYear != 0 {
+		t.Errorf("EPGYear = %d, want 0", cfg.EPGYear)
+	}
 }
 
 func TestLoadOverrides(t *testing.T) {
@@ -54,6 +70,10 @@ func TestLoadOverrides(t *testing.T) {
 	t.Setenv("F1IPTV_TTL", "5s")
 	t.Setenv("F1IPTV_VERIFY_PLAYLIST", "true")
 	t.Setenv("F1IPTV_LOG_LEVEL", "debug")
+	t.Setenv("F1IPTV_EPG_ENABLED", "false")
+	t.Setenv("F1IPTV_EPG_API_URL", "https://epg.example.com/v1")
+	t.Setenv("F1IPTV_EPG_TTL", "1h")
+	t.Setenv("F1IPTV_EPG_YEAR", "2025")
 
 	cfg, err := Load()
 	if err != nil {
@@ -66,6 +86,12 @@ func TestLoadOverrides(t *testing.T) {
 		cfg.ResolutionTTL != 5*time.Second ||
 		!cfg.VerifyPlaylist || cfg.LogLevel != "debug" {
 		t.Errorf("unexpected config: %+v", cfg)
+	}
+	if cfg.EPGEnabled {
+		t.Error("EPGEnabled = true, want false")
+	}
+	if cfg.EPGAPIURL != "https://epg.example.com/v1" || cfg.EPGTTL != time.Hour || cfg.EPGYear != 2025 {
+		t.Errorf("unexpected epg config: %+v", cfg)
 	}
 }
 
@@ -80,5 +106,19 @@ func TestLoadInvalidBool(t *testing.T) {
 	t.Setenv("F1IPTV_VERIFY_PLAYLIST", "maybe")
 	if _, err := Load(); err == nil {
 		t.Fatal("expected error for invalid boolean")
+	}
+}
+
+func TestLoadInvalidEPGYears(t *testing.T) {
+	t.Setenv("F1IPTV_EPG_YEAR", "next")
+	if _, err := Load(); err == nil {
+		t.Fatal("expected error for invalid EPG year")
+	}
+}
+
+func TestLoadInvalidEPGTTL(t *testing.T) {
+	t.Setenv("F1IPTV_EPG_TTL", "later")
+	if _, err := Load(); err == nil {
+		t.Fatal("expected error for invalid EPG TTL")
 	}
 }

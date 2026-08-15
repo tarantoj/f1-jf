@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"f1-jf/internal/config"
+	"f1-jf/internal/epg"
 	f1net "f1-jf/internal/f1net"
 	"f1-jf/internal/httpserver"
 	"f1-jf/internal/iptv"
@@ -49,9 +50,24 @@ func run() error {
 		return err
 	}
 
+	var epgSvc *epg.Service
+	if cfg.EPGEnabled {
+		year := cfg.EPGYear
+		if year == 0 {
+			year = time.Now().Year()
+		}
+		epgSvc = epg.New(epg.Options{
+			APIURL: cfg.EPGAPIURL,
+			Year:   year,
+			TTL:    cfg.EPGTTL,
+			Logger: logger,
+		})
+	}
+
 	server := httpserver.New(registry, channels, httpserver.Options{
 		Base:   cfg.BaseURL,
 		Logger: logger,
+		EPG:    epgSvc,
 	})
 
 	httpServer := &http.Server{
