@@ -193,11 +193,3 @@ func TestScheduleLastGoodFallback(t *testing.T) {
 		t.Errorf("fallback programmes = %d, want 3", len(got.Programmes))
 	}
 }
-
-func TestEscapeXML(t *testing.T) {
-	got := escapeXML(`A & B <tag> "q" 'apos'`)
-	want := "A &amp; B &lt;tag&gt; &quot;q&quot; &apos;apos&apos;"
-	if got != want {
-		t.Errorf("escapeXML = %q, want %q", got, want)
-	}
-}

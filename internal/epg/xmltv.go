@@ -1,52 +1,57 @@
 package epg
 
 import (
+	"bytes"
 	"encoding/xml"
-	"strings"
-)
+	"time"
 
-// xmltvTime is the XMLTV timestamp layout: YYYYMMDDHHMMSS ±HHMM.
-const xmltvTime = "20060102150405 -0700"
+	"github.com/sherif-fanous/xmltv"
+)
 
 // xmltvDoc renders a full XMLTV document for the given channels. Every
 // programme is listed under every channel because they all carry the same
 // live feed.
 func xmltvDoc(channels []xmltvChannel, programmes []xmltvProgramme) []byte {
-	var b strings.Builder
-	b.WriteString(xml.Header)
-	b.WriteString("<tv generator-info-name=\"f1-jf\">\n")
+	tv := xmltv.TV{
+		GeneratorInfoName: ptr("f1-jf"),
+		Channels:          make([]xmltv.Channel, 0, len(channels)),
+		Programmes:        make([]xmltv.Programme, 0, len(channels)*len(programmes)),
+	}
 	for _, ch := range channels {
-		b.WriteString(`  <channel id="`)
-		b.WriteString(ch.ID)
-		b.WriteString("\">\n")
-		b.WriteString(`    <display-name lang="en">`)
-		b.WriteString(escapeXML(ch.Name))
-		b.WriteString("</display-name>\n")
-		b.WriteString("  </channel>\n")
+		tv.Channels = append(tv.Channels, xmltv.Channel{
+			ID: ch.ID,
+			DisplayNames: []xmltv.DisplayName{
+				{Lang: ptr("en"), Text: ch.Name},
+			},
+		})
 	}
 	for _, p := range programmes {
 		for _, ch := range channels {
-			b.WriteString(`  <programme start="`)
-			b.WriteString(p.Start)
-			b.WriteString(`" stop="`)
-			b.WriteString(p.Stop)
-			b.WriteString(`" channel="`)
-			b.WriteString(ch.ID)
-			b.WriteString("\">\n")
-			b.WriteString(`    <title lang="en">`)
-			b.WriteString(escapeXML(p.Title))
-			b.WriteString("</title>\n")
-			if p.Desc != "" {
-				b.WriteString(`    <desc lang="en">`)
-				b.WriteString(escapeXML(p.Desc))
-				b.WriteString("</desc>\n")
-			}
-			b.WriteString("    <category lang=\"en\">Sport</category>\n")
-			b.WriteString("  </programme>\n")
+			tv.Programmes = append(tv.Programmes, xmltv.Programme{
+				Start:   xmltv.Time{Time: p.Start},
+				Stop:    &xmltv.Time{Time: p.Stop},
+				Channel: ch.ID,
+				Titles: []xmltv.Title{
+					{Lang: ptr("en"), Text: p.Title},
+				},
+				Descriptions: []xmltv.Description{
+					{Lang: ptr("en"), Text: p.Desc},
+				},
+				Categories: []xmltv.Category{
+					{Lang: ptr("en"), Text: "Sport"},
+				},
+			})
 		}
 	}
-	b.WriteString("</tv>\n")
-	return []byte(b.String())
+
+	var b bytes.Buffer
+	b.WriteString(xml.Header)
+	enc := xml.NewEncoder(&b)
+	enc.Indent("", "  ")
+	if err := enc.Encode(tv); err != nil {
+		return []byte(xml.Header + "</tv>\n")
+	}
+	return b.Bytes()
 }
 
 type xmltvChannel struct {
@@ -55,30 +60,11 @@ type xmltvChannel struct {
 }
 
 type xmltvProgramme struct {
-	Start string
-	Stop  string
+	Start time.Time
+	Stop  time.Time
 	Title string
 	Desc  string
 }
 
-// escapeXML escapes the five XML special characters.
-func escapeXML(s string) string {
-	var b strings.Builder
-	for _, r := range s {
-		switch r {
-		case '&':
-			b.WriteString("&amp;")
-		case '<':
-			b.WriteString("&lt;")
-		case '>':
-			b.WriteString("&gt;")
-		case '"':
-			b.WriteString("&quot;")
-		case '\'':
-			b.WriteString("&apos;")
-		default:
-			b.WriteRune(r)
-		}
-	}
-	return b.String()
-}
+// ptr returns a pointer to v, for the library's pointer-typed fields.
+func ptr[T any](v T) *T { return &v }

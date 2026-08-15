@@ -189,12 +189,7 @@ func (s *Service) RenderXML(ctx context.Context, channels []*iptv.Channel) ([]by
 		if !p.Stop.After(s.now()) {
 			continue
 		}
-		progs = append(progs, xmltvProgramme{
-			Start: p.Start.Format(xmltvTime),
-			Stop:  p.Stop.Format(xmltvTime),
-			Title: p.Title,
-			Desc:  p.Desc,
-		})
+		progs = append(progs, xmltvProgramme(p))
 	}
 	return xmltvDoc(chs, progs), nil
 }

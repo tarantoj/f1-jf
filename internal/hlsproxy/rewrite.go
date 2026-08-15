@@ -4,11 +4,10 @@ import (
 	"bytes"
 	"net/url"
 	"path"
-	"regexp"
 	"strings"
-)
 
-var uriAttrRe = regexp.MustCompile(`URI="([^"]*)"`)
+	m3u8 "github.com/Eyevinn/hls-m3u8/m3u8"
+)
 
 // looksLikePlaylist reports whether a fetched resource is an HLS playlist
 // rather than a media segment, based on the upstream content type and the
@@ -29,30 +28,37 @@ func RewritePlaylist(content []byte, upstreamBase, pubBase, channel string) []by
 	if !looksLikePlaylist(content[:min(len(content), 16)], "") {
 		return content
 	}
-	lines := strings.Split(string(content), "\n")
-	for i, line := range lines {
-		t := strings.TrimSpace(line)
-		switch {
-		case t == "":
-			continue
-		case strings.HasPrefix(t, "#"):
-			if strings.Contains(line, "URI=") {
-				lines[i] = rewriteURIAttr(line, upstreamBase, pubBase, channel)
+	pl, _, err := m3u8.DecodeFrom(bytes.NewReader(content), false)
+	if err != nil {
+		return content
+	}
+	switch p := pl.(type) {
+	case *m3u8.MediaPlaylist:
+		for i := uint(0); i < p.Count(); i++ {
+			s := p.Segments[i]
+			s.URI = rewriteURI(upstreamBase, pubBase, channel, s.URI)
+			for j := range s.Keys {
+				if s.Keys[j].URI != "" {
+					s.Keys[j].URI = rewriteURI(upstreamBase, pubBase, channel, s.Keys[j].URI)
+				}
 			}
-		default:
-			lines[i] = rewriteURI(upstreamBase, pubBase, channel, t)
+			if s.Map != nil && s.Map.URI != "" {
+				s.Map.URI = rewriteURI(upstreamBase, pubBase, channel, s.Map.URI)
+			}
+		}
+	case *m3u8.MasterPlaylist:
+		for _, v := range p.Variants {
+			if v.URI != "" {
+				v.URI = rewriteURI(upstreamBase, pubBase, channel, v.URI)
+			}
+			for _, alt := range v.Alternatives {
+				if alt.URI != "" {
+					alt.URI = rewriteURI(upstreamBase, pubBase, channel, alt.URI)
+				}
+			}
 		}
 	}
-	return []byte(strings.Join(lines, "\n"))
-}
-
-// rewriteURIAttr rewrites URI="..." attributes inside playlist tags such as
-// #EXT-X-KEY and #EXT-X-MEDIA.
-func rewriteURIAttr(line, upstreamBase, pubBase, channel string) string {
-	return uriAttrRe.ReplaceAllStringFunc(line, func(m string) string {
-		inner := m[len(`URI="`) : len(m)-1]
-		return `URI="` + rewriteURI(upstreamBase, pubBase, channel, inner) + `"`
-	})
+	return pl.Encode().Bytes()
 }
 
 // rewriteURI turns an HLS URI reference into an absolute URL on the proxy.

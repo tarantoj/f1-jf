@@ -1,6 +1,7 @@
 package f1net
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -9,6 +10,8 @@ import (
 	"net/url"
 	"path"
 	"regexp"
+
+	"golang.org/x/net/html"
 )
 
 // streamfreeResolver resolves https://streamfree.top/embed/{...}/{key}
@@ -179,8 +182,9 @@ func fetchStreamStatus(ctx context.Context, c *Client, origin, key string) (*str
 	return &out, nil
 }
 
-// fetchTokens extracts the _0x token map from the embed page. It returns the
-// default tokens if the page does not contain the map (e.g. page changed).
+// fetchTokens extracts the _0x token map from the embed page's <script>
+// blocks. It returns the default tokens if the page does not contain the map
+// (e.g. page changed).
 func fetchTokens(ctx context.Context, c *Client, hc *http.Client, ua, embedURL string) (map[string]qualityToken, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, embedURL, nil)
 	if err != nil {
@@ -197,15 +201,38 @@ func fetchTokens(ctx context.Context, c *Client, hc *http.Client, ua, embedURL s
 	if err != nil {
 		return nil, err
 	}
-	m := tokensRe.FindSubmatch(body)
-	if m == nil {
-		return nil, fmt.Errorf("token map not found in embed page")
+	for _, script := range scriptBodies(body) {
+		m := tokensRe.FindSubmatch(script)
+		if m == nil {
+			continue
+		}
+		var out map[string]qualityToken
+		if err := json.Unmarshal(m[1], &out); err != nil {
+			return nil, err
+		}
+		return out, nil
 	}
-	var out map[string]qualityToken
-	if err := json.Unmarshal(m[1], &out); err != nil {
-		return nil, err
+	return nil, fmt.Errorf("token map not found in embed page")
+}
+
+// scriptBodies returns the text content of every <script> element in the page.
+func scriptBodies(body []byte) [][]byte {
+	z := html.NewTokenizer(bytes.NewReader(body))
+	var out [][]byte
+	for {
+		tt := z.Next()
+		switch tt {
+		case html.ErrorToken:
+			return out
+		case html.StartTagToken, html.SelfClosingTagToken:
+			if name, _ := z.TagName(); string(name) == "script" {
+				tt := z.Next()
+				if tt == html.TextToken {
+					out = append(out, z.Text())
+				}
+			}
+		}
 	}
-	return out, nil
 }
 
 // getJSON fetches and decodes a JSON endpoint using the client's UA.

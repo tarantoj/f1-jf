@@ -10,6 +10,8 @@ import (
 	"sync"
 	"time"
 
+	"golang.org/x/sync/singleflight"
+
 	f1net "f1-jf/internal/f1net"
 )
 
@@ -74,6 +76,7 @@ type Registry struct {
 	ttl      time.Duration
 	mu       sync.RWMutex
 	cache    map[string]cachedStream
+	group    singleflight.Group
 }
 
 type cachedStream struct {
@@ -95,7 +98,8 @@ func NewRegistry(resolver Resolver, ttl time.Duration) *Registry {
 
 // Resolve returns the channel's stream, re-resolving once the cached entry
 // is older than the TTL. If a fresh resolve fails, the last good stream is
-// returned as a fallback; if there is none, the error is returned.
+// returned as a fallback; if there is none, the error is returned. Concurrent
+// resolves of the same channel are coalesced into a single upstream call.
 func (r *Registry) Resolve(ctx context.Context, ch *Channel) (*f1net.Stream, error) {
 	r.mu.RLock()
 	c := r.cache[ch.ID]
@@ -105,7 +109,10 @@ func (r *Registry) Resolve(ctx context.Context, ch *Channel) (*f1net.Stream, err
 		return c.stream, nil
 	}
 
-	st, err := r.resolver.ResolveStream(ctx, ch.Source, ch.Quality)
+	v, err, _ := r.group.Do(ch.ID, func() (any, error) {
+		return r.resolver.ResolveStream(ctx, ch.Source, ch.Quality)
+	})
+	st, _ := v.(*f1net.Stream)
 
 	r.mu.Lock()
 	r.cache[ch.ID] = cachedStream{stream: st, err: err, at: time.Now()}

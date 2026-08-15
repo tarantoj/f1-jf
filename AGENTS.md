@@ -19,7 +19,7 @@ Run inside the devenv shell (`devenv shell`) or the flake dev shell
 
 Nix:
 
-- `nix build .#f1iptv` / `.#f1m3u8`
+- `nix build .#f1iptv`
 - `nix flake check`
 - `nix develop`
 - NixOS module: `modules/f1iptv.nix` (exposed as `nixosModules.default`)
@@ -34,12 +34,12 @@ Nix:
 - `internal/epg` — XMLTV program guide from the OpenF1 F1 calendar (cached, `RenderXML`).
 - `internal/hlsproxy` — transport-agnostic upstream fetch + HLS playlist URI rewriting.
 - `internal/httpserver` — HTTP layer: routes, handlers, slog middleware.
-- `flake.nix` / `modules/f1iptv.nix` — Nix packaging and NixOS deployment module.
+- `package.nix` / `flake.nix` / `modules/f1iptv.nix` — Nix packaging (single derivation installing both `f1iptv` and `f1m3u8` binaries) and NixOS deployment module.
 - `docs/STREAMING.md` — how the upstream m3u8 extraction works.
 
 ## Conventions
 
-- Standard library only — no external Go dependencies (go.mod has no `require`).
+- External Go dependencies are allowed, but each must justify its use and be pinned in go.mod/go.sum. Currently: `github.com/Eyevinn/hls-m3u8` (HLS parsing), `golang.org/x/net` (HTML tokenizing), `golang.org/x/sync` (singleflight), `github.com/sherif-fanous/xmltv` (XMLTV rendering).
 - `log/slog` for structured logging; services take a `*slog.Logger` via options.
 - Config is env-based, read in `internal/config`; defaults documented on each field. EPG: `F1IPTV_EPG_ENABLED`, `F1IPTV_EPG_API_URL`, `F1IPTV_EPG_TTL`, `F1IPTV_EPG_YEAR`.
 - External HTTP requests must send a browser-like `User-Agent` (see `internal/f1net` `defaultUA`); upstream sources are Referer/Origin gated.
