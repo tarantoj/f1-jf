@@ -14,18 +14,32 @@ const xmltvTime = "20060102150405 -0700"
 func xmltvDoc(channels []xmltvChannel, programmes []xmltvProgramme) []byte {
 	var b strings.Builder
 	b.WriteString(xml.Header)
-	b.WriteString(`<tv generator-info-name="f1-jf">` + "\n")
+	b.WriteString("<tv generator-info-name=\"f1-jf\">\n")
 	for _, ch := range channels {
-		b.WriteString("  <channel id=\"" + ch.ID + "\">\n")
-		b.WriteString("    <display-name lang=\"en\">" + escapeXML(ch.Name) + "</display-name>\n")
+		b.WriteString(`  <channel id="`)
+		b.WriteString(ch.ID)
+		b.WriteString("\">\n")
+		b.WriteString(`    <display-name lang="en">`)
+		b.WriteString(escapeXML(ch.Name))
+		b.WriteString("</display-name>\n")
 		b.WriteString("  </channel>\n")
 	}
 	for _, p := range programmes {
 		for _, ch := range channels {
-			b.WriteString(`  <programme start="` + p.Start + `" stop="` + p.Stop + `" channel="` + ch.ID + `">` + "\n")
-			b.WriteString("    <title lang=\"en\">" + escapeXML(p.Title) + "</title>\n")
+			b.WriteString(`  <programme start="`)
+			b.WriteString(p.Start)
+			b.WriteString(`" stop="`)
+			b.WriteString(p.Stop)
+			b.WriteString(`" channel="`)
+			b.WriteString(ch.ID)
+			b.WriteString("\">\n")
+			b.WriteString(`    <title lang="en">`)
+			b.WriteString(escapeXML(p.Title))
+			b.WriteString("</title>\n")
 			if p.Desc != "" {
-				b.WriteString("    <desc lang=\"en\">" + escapeXML(p.Desc) + "</desc>\n")
+				b.WriteString(`    <desc lang="en">`)
+				b.WriteString(escapeXML(p.Desc))
+				b.WriteString("</desc>\n")
 			}
 			b.WriteString("    <category lang=\"en\">Sport</category>\n")
 			b.WriteString("  </programme>\n")
