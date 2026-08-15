@@ -13,6 +13,7 @@ Run inside the devenv shell (`devenv shell`) or the flake dev shell
 - Vet: `go vet ./...`
 - Format: `gofmt -l .` (report), `gofmt -w .` (write)
 - Static analysis: `staticcheck ./...`
+- Full test run (hooks + tests): `devenv test` (inside `devenv shell`)
 - Run the IPTV service: `go run ./cmd/f1iptv` (config via `F1IPTV_*` env vars)
 - Debug CLI: `go run ./cmd/f1m3u8 [-quality 1080p] [-verify]`
 

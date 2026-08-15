@@ -133,7 +133,7 @@ func (s *Server) serveUpstream(w http.ResponseWriter, r *http.Request, ch *iptv.
 		rewritten := hlsproxy.RewritePlaylist(content, upstreamBase, s.publicBase(r), ch.ID)
 		w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
 		w.Header().Set("Cache-Control", "no-cache")
-		io.WriteString(w, string(rewritten))
+		w.Write(rewritten)
 		return
 	}
 
