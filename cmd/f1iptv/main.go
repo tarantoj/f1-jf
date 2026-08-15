@@ -1,0 +1,118 @@
+// Command f1iptv runs the F1 IPTV service: it proxies live F1 streams from
+// the F1Net dashboard (resolved by internal/f1net) and exposes them as a
+// well-formed IPTV M3U playlist consumable by Jellyfin's M3U Tuner.
+//
+// Add the playlist URL (e.g. http://localhost:8080/iptv/playlist.m3u) as an
+// M3U Tuner source in Jellyfin; all upstream header/auth requirements are
+// handled by the proxy, so the source is never contacted directly.
+//
+// Configuration is read from the environment (see internal/config).
+package main
+
+import (
+	"context"
+	"errors"
+	"log/slog"
+	"net/http"
+	"os"
+	"os/signal"
+	"strings"
+	"syscall"
+	"time"
+
+	"f1-jf/internal/config"
+	f1net "f1-jf/internal/f1net"
+	"f1-jf/internal/httpserver"
+	"f1-jf/internal/iptv"
+)
+
+func main() {
+	if err := run(); err != nil {
+		slog.Error("f1iptv", "error", err)
+		os.Exit(1)
+	}
+}
+
+func run() error {
+	cfg, err := config.Load()
+	if err != nil {
+		return err
+	}
+	logger := newLogger(cfg.LogLevel)
+	slog.SetDefault(logger)
+
+	f1 := &f1net.Client{VerifyPlaylist: cfg.VerifyPlaylist}
+	registry := iptv.NewRegistry(f1, cfg.ResolutionTTL)
+
+	channels, err := iptv.ChannelsFromQualities(cfg.Qualities, cfg.Group, f1net.Source{Name: "F1", URL: cfg.SourceURL})
+	if err != nil {
+		return err
+	}
+
+	server := httpserver.New(registry, channels, httpserver.Options{
+		Base:   cfg.BaseURL,
+		Logger: logger,
+	})
+
+	httpServer := &http.Server{
+		Addr:              cfg.Listen,
+		Handler:           server.Handler(),
+		ReadHeaderTimeout: 10 * time.Second,
+	}
+
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
+	errCh := make(chan error, 1)
+	go func() {
+		logger.Info("listening",
+			"addr", cfg.Listen,
+			"playlist", playlistURL(cfg.BaseURL, cfg.Listen),
+			"channels", len(channels))
+		errCh <- httpServer.ListenAndServe()
+	}()
+
+	select {
+	case err := <-errCh:
+		return err
+	case <-ctx.Done():
+	}
+
+	logger.Info("shutting down")
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	if err := httpServer.Shutdown(shutdownCtx); err != nil {
+		return err
+	}
+	if err := <-errCh; err != nil && !errors.Is(err, http.ErrServerClosed) {
+		return err
+	}
+	return nil
+}
+
+// newLogger builds a structured logger at the requested level.
+func newLogger(level string) *slog.Logger {
+	var l slog.Level
+	switch strings.ToLower(level) {
+	case "debug":
+		l = slog.LevelDebug
+	case "warn":
+		l = slog.LevelWarn
+	case "error":
+		l = slog.LevelError
+	default:
+		l = slog.LevelInfo
+	}
+	return slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: l}))
+}
+
+// playlistURL builds the playlist URL shown at startup.
+func playlistURL(base, listen string) string {
+	if base != "" {
+		return strings.TrimRight(base, "/") + "/iptv/playlist.m3u"
+	}
+	if strings.HasPrefix(listen, ":") {
+		return "http://localhost" + listen + "/iptv/playlist.m3u"
+	}
+	return "http://" + listen + "/iptv/playlist.m3u"
+}
