@@ -59,9 +59,13 @@ func testChannels() []*iptv.Channel {
 	}
 }
 
+// seasonStart is a fixed clock before the 2026 test sessions, so nothing is
+// filtered as past.
+func seasonStart() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC) }
+
 func TestRenderXML(t *testing.T) {
 	srv, _ := testAPI(t)
-	svc := New(Options{APIURL: srv.URL, Year: 2026, TTL: time.Hour, HTTPClient: srv.Client()})
+	svc := New(Options{APIURL: srv.URL, Year: 2026, TTL: time.Hour, HTTPClient: srv.Client(), Now: seasonStart})
 
 	xml, err := svc.RenderXML(context.Background(), testChannels())
 	if err != nil {
@@ -97,6 +101,34 @@ func TestRenderXML(t *testing.T) {
 	// Cancelled and testing sessions must be excluded.
 	if strings.Contains(text, "Sprint") || strings.Contains(text, "Day 1") || strings.Contains(text, "Pre-Season Testing") {
 		t.Errorf("cancelled/testing sessions included:\n%s", text)
+	}
+}
+
+func TestRenderXMLFiltersPast(t *testing.T) {
+	srv, _ := testAPI(t)
+	// "Now" is after Practice 1 (ends 12:30) but before Qualifying (starts 14:00).
+	svc := New(Options{
+		APIURL:     srv.URL,
+		Year:       2026,
+		TTL:        time.Hour,
+		HTTPClient: srv.Client(),
+		Now: func() time.Time {
+			return time.Date(2026, 3, 14, 13, 0, 0, 0, time.UTC)
+		},
+	})
+
+	xml, err := svc.RenderXML(context.Background(), testChannels())
+	if err != nil {
+		t.Fatalf("RenderXML: %v", err)
+	}
+	text := string(xml)
+
+	// Only Qualifying and Race remain: 2 sessions x 2 channels.
+	if got := strings.Count(text, "<programme "); got != 4 {
+		t.Errorf("programme count = %d, want 4:\n%s", got, text)
+	}
+	if strings.Contains(text, "Practice 1") {
+		t.Errorf("past event Practice 1 not filtered:\n%s", text)
 	}
 }
 

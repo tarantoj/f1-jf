@@ -45,6 +45,9 @@ type Options struct {
 	HTTPClient *http.Client
 	// Logger receives diagnostics. Defaults to slog.Default().
 	Logger *slog.Logger
+	// Now returns the current time, used to drop programmes that have already
+	// ended from the guide. Defaults to time.Now.
+	Now func() time.Time
 }
 
 // Service fetches and caches the F1 season calendar and renders it as XMLTV.
@@ -59,6 +62,8 @@ type Service struct {
 	cached   *Schedule
 	cachedAt time.Time
 	lastErr  error
+
+	now func() time.Time
 }
 
 func New(opts Options) *Service {
@@ -77,12 +82,16 @@ func New(opts Options) *Service {
 	if opts.Logger == nil {
 		opts.Logger = slog.Default()
 	}
+	if opts.Now == nil {
+		opts.Now = time.Now
+	}
 	return &Service{
 		apiURL: opts.APIURL,
 		year:   opts.Year,
 		ttl:    opts.TTL,
 		client: opts.HTTPClient,
 		log:    opts.Logger,
+		now:    opts.Now,
 	}
 }
 
@@ -177,6 +186,9 @@ func (s *Service) RenderXML(ctx context.Context, channels []*iptv.Channel) ([]by
 	}
 	progs := make([]xmltvProgramme, 0, len(sched.Programmes))
 	for _, p := range sched.Programmes {
+		if !p.Stop.After(s.now()) {
+			continue
+		}
 		progs = append(progs, xmltvProgramme{
 			Start: p.Start.Format(xmltvTime),
 			Stop:  p.Stop.Format(xmltvTime),
