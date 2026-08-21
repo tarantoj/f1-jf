@@ -55,12 +55,11 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	channels := []*iptv.Channel{ch}
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
-	prewarm(registry, channels, logger)
+	prewarm(registry, ch, logger)
 
 	var epgSvc *epg.Service
 	if cfg.EPGEnabled {
@@ -77,7 +76,7 @@ func run() error {
 		prewarmEPG(ctx, epgSvc, logger)
 	}
 
-	server := httpserver.New(registry, channels, httpserver.Options{
+	server := httpserver.New(registry, ch, httpserver.Options{
 		Base:   cfg.BaseURL,
 		Logger: logger,
 		EPG:    epgSvc,
@@ -95,7 +94,7 @@ func run() error {
 		logger.Info("listening",
 			"addr", addr,
 			"playlist", playlistURL(cfg.BaseURL, addr),
-			"channels", len(channels))
+			"channel", ch.ID)
 		errCh <- httpServer.ListenAndServe()
 	}()
 
@@ -117,20 +116,18 @@ func run() error {
 	return nil
 }
 
-// prewarm resolves every channel concurrently in the background so the first
-// stream start finds a warm Registry cache instead of paying the full
-// multi-request source resolution inline. It never blocks startup or fails the
-// service; failures are logged and the cache is populated lazily later.
-func prewarm(registry *iptv.Registry, channels []*iptv.Channel, logger *slog.Logger) {
-	for _, ch := range channels {
-		go func(ch *iptv.Channel) {
-			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			defer cancel()
-			if _, err := registry.Resolve(ctx, ch); err != nil {
-				logger.Warn("prewarm failed", "channel", ch.ID, "error", err)
-			}
-		}(ch)
-	}
+// prewarm resolves the channel in the background so the first stream start
+// finds a warm Registry cache instead of paying the full multi-request source
+// resolution inline. It never blocks startup or fails the service; failures
+// are logged and the cache is populated lazily later.
+func prewarm(registry *iptv.Registry, ch *iptv.Channel, logger *slog.Logger) {
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if _, err := registry.Resolve(ctx, ch); err != nil {
+			logger.Warn("prewarm failed", "channel", ch.ID, "error", err)
+		}
+	}()
 }
 
 // prewarmEPG warms the EPG calendar cache once in the background so the first

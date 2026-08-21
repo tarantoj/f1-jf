@@ -27,14 +27,14 @@ func (s *Server) handleReady(w http.ResponseWriter, _ *http.Request) {
 	fmt.Fprintln(w, "ready")
 }
 
-// handleGuide serves the XMLTV electronic program guide for the configured
-// channels, wired to the playlist's tvg-ids.
+// handleGuide serves the XMLTV electronic program guide for the channel,
+// wired to the playlist's tvg-id.
 func (s *Server) handleGuide(w http.ResponseWriter, r *http.Request) {
 	if s.epg == nil {
 		http.Error(w, "epg disabled", http.StatusServiceUnavailable)
 		return
 	}
-	doc, err := s.epg.RenderXML(r.Context(), s.channels)
+	doc, err := s.epg.RenderXML(r.Context(), s.ch)
 	if err != nil {
 		s.logger(r.Context()).Warn("render guide", "error", err)
 		http.Error(w, "guide unavailable", http.StatusServiceUnavailable)
@@ -46,19 +46,17 @@ func (s *Server) handleGuide(w http.ResponseWriter, r *http.Request) {
 }
 
 // handlePlaylist serves the well-formed M3U channel list consumed by
-// Jellyfin's M3U Tuner. Offline channels are omitted.
+// Jellyfin's M3U Tuner. An offline channel is omitted.
 func (s *Server) handlePlaylist(w http.ResponseWriter, r *http.Request) {
 	var b strings.Builder
 	b.WriteString("#EXTM3U\n")
-	for _, ch := range s.channels {
-		st, err := s.registry.Resolve(r.Context(), ch)
-		if err != nil || st == nil {
-			s.logger(r.Context()).Warn("channel offline", "channel", ch.ID, "error", err)
-			continue
-		}
+	st, err := s.registry.Resolve(r.Context(), s.ch)
+	if err != nil || st == nil {
+		s.logger(r.Context()).Warn("channel offline", "channel", s.ch.ID, "error", err)
+	} else {
 		fmt.Fprintf(&b, `#EXTINF:-1 tvg-id=%q tvg-name=%q group-title=%q,%s`+"\n",
-			ch.ID, ch.Name, ch.Group, ch.Name)
-		fmt.Fprintf(&b, "%s/iptv/stream/%s.ts\n", s.publicBase(r), ch.ID)
+			s.ch.ID, s.ch.Name, s.ch.Group, s.ch.Name)
+		fmt.Fprintf(&b, "%s/iptv/stream/raw.ts\n", s.publicBase(r))
 	}
 
 	w.Header().Set("Content-Type", "application/x-mpegurl; charset=utf-8")
@@ -66,48 +64,46 @@ func (s *Server) handlePlaylist(w http.ResponseWriter, r *http.Request) {
 	io.WriteString(w, b.String())
 }
 
-// handleStream serves the channel's live stream. When the route is requested
-// with a .ts suffix it returns a continuous raw MPEG-TS stream (concatenated
-// upstream segments), which makes Jellyfin pick its SharedHttpStream proxy
-// path instead of handing the m3u8 and its segment URLs directly to clients.
-// Otherwise it serves the channel's live HLS playlist, re-fetched upstream
+// handleStream serves the channel's live HLS playlist, re-fetched upstream
 // with the required headers and rewritten so all segment (and nested
-// playlist) requests go through the proxy.
+// playlist) requests go through the proxy. The raw MPEG-TS variant is served
+// by handleStreamRawTS.
 func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
-	chName := r.PathValue("channel")
-	rawTS := strings.HasSuffix(chName, ".ts")
-	chID := strings.TrimSuffix(chName, ".ts")
-	ch, ok := s.channel(chID)
-	if !ok {
-		http.NotFound(w, r)
-		return
-	}
-	st, err := s.registry.Resolve(r.Context(), ch)
+	st, err := s.registry.Resolve(r.Context(), s.ch)
 	if err != nil || st == nil {
 		http.Error(w, "stream offline", http.StatusServiceUnavailable)
-		return
-	}
-	if rawTS {
-		s.serveRawTS(w, r, ch, st)
 		return
 	}
 
 	up, err := s.upstream.Fetch(r.Context(), st.Headers, st.PlaylistURL, "")
 	if err != nil {
-		if st2, err2 := s.registry.Refresh(r.Context(), ch); err2 == nil && st2 != nil {
-			s.logger(r.Context()).Info("stream switched", "channel", ch.ID,
+		if st2, err2 := s.registry.Refresh(r.Context(), s.ch); err2 == nil && st2 != nil {
+			s.logger(r.Context()).Info("stream switched", "channel", s.ch.ID,
 				"quality", st2.Quality, "error", err)
 			st = st2
 			up, err = s.upstream.Fetch(r.Context(), st.Headers, st.PlaylistURL, "")
 		}
 		if err != nil {
-			s.logger(r.Context()).Warn("fetch playlist", "channel", ch.ID, "error", err)
+			s.logger(r.Context()).Warn("fetch playlist", "channel", s.ch.ID, "error", err)
 			http.Error(w, "upstream unreachable", http.StatusBadGateway)
 			return
 		}
 	}
 	defer up.Body.Close()
-	s.serveUpstream(w, r, ch, up, st.PlaylistURL)
+	s.serveUpstream(w, r, up, st.PlaylistURL)
+}
+
+// handleStreamRawTS serves the channel's live stream as a continuous raw
+// MPEG-TS stream (concatenated upstream segments), which makes Jellyfin pick
+// its SharedHttpStream proxy path instead of handing the m3u8 and its segment
+// URLs directly to clients.
+func (s *Server) handleStreamRawTS(w http.ResponseWriter, r *http.Request) {
+	st, err := s.registry.Resolve(r.Context(), s.ch)
+	if err != nil || st == nil {
+		http.Error(w, "stream offline", http.StatusServiceUnavailable)
+		return
+	}
+	s.serveRawTS(w, r, s.ch, st)
 }
 
 // serveRawTS streams the channel's upstream HLS as continuous MPEG-TS,
@@ -245,18 +241,13 @@ func (s *Server) streamTSWindow(ctx context.Context, st *f1net.Stream, sent map[
 // (segment or nested playlist) with the channel's headers and streams the
 // result back.
 func (s *Server) handleFetch(w http.ResponseWriter, r *http.Request) {
-	ch, ok := s.channel(r.PathValue("channel"))
-	if !ok {
-		http.NotFound(w, r)
-		return
-	}
 	upstream := r.URL.Query().Get("u")
 	if upstream == "" {
 		http.Error(w, "missing u", http.StatusBadRequest)
 		return
 	}
 
-	st, err := s.registry.Resolve(r.Context(), ch)
+	st, err := s.registry.Resolve(r.Context(), s.ch)
 	if err != nil || st == nil {
 		http.Error(w, "stream offline", http.StatusServiceUnavailable)
 		return
@@ -264,29 +255,29 @@ func (s *Server) handleFetch(w http.ResponseWriter, r *http.Request) {
 
 	up, err := s.upstream.Fetch(r.Context(), st.Headers, upstream, r.Header.Get("Range"))
 	if err != nil {
-		s.logger(r.Context()).Warn("fetch upstream", "channel", ch.ID, "error", err)
+		s.logger(r.Context()).Warn("fetch upstream", "channel", s.ch.ID, "error", err)
 		http.Error(w, "upstream unreachable", http.StatusBadGateway)
 		return
 	}
 	defer up.Body.Close()
-	s.serveUpstream(w, r, ch, up, upstream)
+	s.serveUpstream(w, r, up, upstream)
 }
 
 // serveUpstream forwards an upstream response to the client, rewriting it if
 // it is an HLS playlist and streaming it raw (with Content-Type, Range and
 // status preserved) if it is a media segment.
-func (s *Server) serveUpstream(w http.ResponseWriter, r *http.Request, ch *iptv.Channel, up *hlsproxy.Response, upstreamBase string) {
+func (s *Server) serveUpstream(w http.ResponseWriter, r *http.Request, up *hlsproxy.Response, upstreamBase string) {
 	br := bufio.NewReader(up.Body)
 	prefix, _ := br.Peek(16)
 
 	if up.IsPlaylist(prefix) {
 		content, err := io.ReadAll(io.LimitReader(br, hlsproxy.MaxPlaylistBytes))
 		if err != nil {
-			s.logger(r.Context()).Warn("read playlist", "channel", ch.ID, "error", err)
+			s.logger(r.Context()).Warn("read playlist", "channel", s.ch.ID, "error", err)
 			http.Error(w, "read upstream", http.StatusBadGateway)
 			return
 		}
-		rewritten := hlsproxy.RewritePlaylist(content, upstreamBase, s.publicBase(r), ch.ID)
+		rewritten := hlsproxy.RewritePlaylist(content, upstreamBase, s.publicBase(r))
 		w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
 		w.Header().Set("Cache-Control", "no-cache")
 		w.Write(rewritten)
@@ -304,16 +295,6 @@ func (s *Server) serveUpstream(w http.ResponseWriter, r *http.Request, ch *iptv.
 	w.Header().Set("Accept-Ranges", "bytes")
 	w.WriteHeader(up.Status)
 	io.Copy(w, br)
-}
-
-// channel returns the channel with the given ID.
-func (s *Server) channel(id string) (*iptv.Channel, bool) {
-	for _, ch := range s.channels {
-		if ch.ID == id {
-			return ch, true
-		}
-	}
-	return nil, false
 }
 
 // publicBase builds the absolute base URL this server is reachable at.

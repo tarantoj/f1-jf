@@ -30,25 +30,25 @@ type Options struct {
 	EPG EPGRenderer
 }
 
-// EPGRenderer renders an XMLTV document for the given channels.
+// EPGRenderer renders an XMLTV document for the given channel.
 type EPGRenderer interface {
-	RenderXML(ctx context.Context, channels []*iptv.Channel) ([]byte, error)
+	RenderXML(ctx context.Context, ch *iptv.Channel) ([]byte, error)
 }
 
-// Server proxies resolved F1 streams and exposes them as an IPTV playlist.
+// Server proxies the resolved F1 stream and exposes it as an IPTV playlist.
 type Server struct {
 	registry *iptv.Registry
-	channels []*iptv.Channel
+	ch       *iptv.Channel
 	base     string
 	log      *slog.Logger
 	upstream *hlsproxy.Client
 	epg      EPGRenderer
 }
 
-func New(registry *iptv.Registry, channels []*iptv.Channel, opts Options) *Server {
+func New(registry *iptv.Registry, ch *iptv.Channel, opts Options) *Server {
 	s := &Server{
 		registry: registry,
-		channels: channels,
+		ch:       ch,
 		base:     strings.TrimRight(opts.Base, "/"),
 		log:      opts.Logger,
 		upstream: opts.Upstream,
@@ -70,8 +70,9 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /healthz", s.handleHealth)
 	mux.HandleFunc("GET /readyz", s.handleReady)
 	mux.HandleFunc("GET /iptv/playlist.m3u", s.handlePlaylist)
-	mux.HandleFunc("GET /iptv/stream/{channel}", s.handleStream)
-	mux.HandleFunc("GET /iptv/f/{channel}/{path...}", s.handleFetch)
+	mux.HandleFunc("GET /iptv/stream", s.handleStream)
+	mux.HandleFunc("GET /iptv/stream/raw.ts", s.handleStreamRawTS)
+	mux.HandleFunc("GET /iptv/f/stream.ts", s.handleFetch)
 	mux.HandleFunc("GET /iptv/guide.xml", s.handleGuide)
 	return withMiddleware(s.log, mux)
 }

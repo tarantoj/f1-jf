@@ -39,7 +39,7 @@ Nix:
 
 ## Conventions
 
-- External Go dependencies are allowed, but each must justify its use and be pinned in go.mod/go.sum. Currently: `github.com/Eyevinn/hls-m3u8` (HLS parsing), `golang.org/x/net` (HTML tokenizing), `golang.org/x/sync` (singleflight), `github.com/sherif-fanous/xmltv` (XMLTV rendering).
+- External Go dependencies are allowed, but each must justify its use and be pinned in go.mod/go.sum. Currently: `github.com/Eyevinn/hls-m3u8` (HLS parsing), `golang.org/x/net` (HTML tokenizing), `github.com/sherif-fanous/xmltv` (XMLTV rendering).
 - `log/slog` for structured logging; services take a `*slog.Logger` via options.
 - Config is env-based, read in `internal/config`; defaults documented on each field. EPG: `F1IPTV_EPG_ENABLED`, `F1IPTV_EPG_API_URL`, `F1IPTV_EPG_TTL`, `F1IPTV_EPG_YEAR`.
 - External HTTP requests must send a browser-like `User-Agent` (see `internal/f1net` `defaultUA`); upstream sources are Referer/Origin gated.
@@ -49,4 +49,4 @@ Nix:
 
 ## Verification
 
-Run `go test ./...` plus `nix flake check` before considering work done. A live smoke test of the service: start `go run ./cmd/f1iptv`, then curl `/healthz`, `/iptv/playlist.m3u`, `/iptv/stream/f1`, and `/iptv/guide.xml`.
+Run `go test ./...` plus `nix flake check` before considering work done. A live smoke test of the service: start `go run ./cmd/f1iptv`, then curl `/healthz`, `/iptv/playlist.m3u`, `/iptv/stream`, `/iptv/stream/raw.ts`, and `/iptv/guide.xml`.

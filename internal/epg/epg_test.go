@@ -52,10 +52,8 @@ func testAPI(t *testing.T) (*httptest.Server, func() int) {
 	return srv, func() int { return int(calls.Load()) }
 }
 
-func testChannels() []*iptv.Channel {
-	return []*iptv.Channel{
-		{ID: "f1", Name: "F1"},
-	}
+func testChannel() *iptv.Channel {
+	return &iptv.Channel{ID: "f1", Name: "F1"}
 }
 
 // seasonStart is a fixed clock before the 2026 test sessions, so nothing is
@@ -66,7 +64,7 @@ func TestRenderXML(t *testing.T) {
 	srv, _ := testAPI(t)
 	svc := New(Options{APIURL: srv.URL, Year: 2026, TTL: time.Hour, HTTPClient: srv.Client(), Now: seasonStart})
 
-	xml, err := svc.RenderXML(context.Background(), testChannels())
+	xml, err := svc.RenderXML(context.Background(), testChannel())
 	if err != nil {
 		t.Fatalf("RenderXML: %v", err)
 	}
@@ -116,7 +114,7 @@ func TestRenderXMLFiltersPast(t *testing.T) {
 		},
 	})
 
-	xml, err := svc.RenderXML(context.Background(), testChannels())
+	xml, err := svc.RenderXML(context.Background(), testChannel())
 	if err != nil {
 		t.Fatalf("RenderXML: %v", err)
 	}

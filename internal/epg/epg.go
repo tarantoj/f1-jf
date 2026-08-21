@@ -183,8 +183,8 @@ func buildSchedule(sessions []Session, meetings []Meeting, year int) (*Schedule,
 	return &Schedule{Year: year, Programmes: progs}, nil
 }
 
-// RenderXML returns the XMLTV document for the given channels.
-func (s *Service) RenderXML(ctx context.Context, channels []*iptv.Channel) ([]byte, error) {
+// RenderXML returns the XMLTV document for the given channel.
+func (s *Service) RenderXML(ctx context.Context, ch *iptv.Channel) ([]byte, error) {
 	sched, err := s.Schedule(ctx)
 	if err != nil {
 		return nil, err
@@ -197,5 +197,5 @@ func (s *Service) RenderXML(ctx context.Context, channels []*iptv.Channel) ([]by
 		}
 		progs = append(progs, p)
 	}
-	return xmltvDoc(channels, progs), nil
+	return xmltvDoc(ch, progs), nil
 }

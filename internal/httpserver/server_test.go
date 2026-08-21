@@ -21,10 +21,8 @@ import (
 	"f1-jf/internal/iptv"
 )
 
-// testChannels is the single F1 channel used by most tests.
-var testChannels = []*iptv.Channel{
-	{ID: "f1", Name: "F1", Group: "Sports", Qualities: []string{"1080p", "720p"}},
-}
+// testChannel is the single F1 channel used by most tests.
+var testChannel = &iptv.Channel{ID: "f1", Name: "F1", Group: "Sports", Qualities: []string{"1080p", "720p"}}
 
 // fakeResolver returns predetermined streams/errors. Resolve iterates the
 // channel's qualities in order and returns the first quality that resolves.
@@ -231,19 +229,19 @@ func newServerWithLogger(t *testing.T, logger *slog.Logger, build func(up *httpt
 		streams = build(up)
 	}
 	resolver := &fakeResolver{streams: streams, errs: errs}
-	return newServerFrom(t, logger, resolver, testChannels, up, epg...)
+	return newServerFrom(t, logger, resolver, testChannel, up, epg...)
 }
 
-// newServerFrom builds a server from an explicit resolver, channel set and
+// newServerFrom builds a server from an explicit resolver, channel and
 // upstream mock.
-func newServerFrom(t *testing.T, logger *slog.Logger, resolver iptv.Resolver, channels []*iptv.Channel, up *httptest.Server, epg ...EPGRenderer) (*httptest.Server, *httptest.Server) {
+func newServerFrom(t *testing.T, logger *slog.Logger, resolver iptv.Resolver, ch *iptv.Channel, up *httptest.Server, epg ...EPGRenderer) (*httptest.Server, *httptest.Server) {
 	t.Helper()
 	reg := iptv.NewRegistry(resolver, 0, nil)
 	opts := Options{Logger: logger, Upstream: hlsproxy.NewClient(up.Client(), nil)}
 	if len(epg) > 0 {
 		opts.EPG = epg[0]
 	}
-	srv := New(reg, channels, opts)
+	srv := New(reg, ch, opts)
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)
 	t.Cleanup(up.Close)
@@ -256,7 +254,7 @@ type fakeEPG struct {
 	err error
 }
 
-func (f *fakeEPG) RenderXML(_ context.Context, _ []*iptv.Channel) ([]byte, error) {
+func (f *fakeEPG) RenderXML(_ context.Context, _ *iptv.Channel) ([]byte, error) {
 	return f.doc, f.err
 }
 
@@ -317,7 +315,7 @@ func TestPlaylist(t *testing.T) {
 	}
 	for _, want := range []string{
 		`tvg-id="f1" tvg-name="F1" group-title="Sports",F1`,
-		ts.URL + "/iptv/stream/f1.ts",
+		ts.URL + "/iptv/stream/raw.ts",
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("playlist missing %q:\n%s", want, text)
@@ -344,7 +342,7 @@ func TestStreamPlaylistRewrite(t *testing.T) {
 		return map[string]*f1net.Stream{"1080p": streamFor(up, "1080p")}
 	}, nil)
 
-	resp, err := http.Get(ts.URL + "/iptv/stream/f1")
+	resp, err := http.Get(ts.URL + "/iptv/stream")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -359,7 +357,7 @@ func TestStreamPlaylistRewrite(t *testing.T) {
 	body, _ := io.ReadAll(resp.Body)
 	text := string(body)
 
-	wantSeg := ts.URL + "/iptv/f/f1/stream.ts?u=" + url.QueryEscape(up.URL+"/live/skyf11080p/1.js")
+	wantSeg := ts.URL + "/iptv/f/stream.ts?u=" + url.QueryEscape(up.URL+"/live/skyf11080p/1.js")
 	if !strings.Contains(text, wantSeg) {
 		t.Errorf("segment 1 not rewritten to proxy:\n%s", text)
 	}
@@ -373,7 +371,7 @@ func TestSegmentPassthrough(t *testing.T) {
 		return map[string]*f1net.Stream{"1080p": streamFor(up, "1080p")}
 	}, nil)
 
-	segURL := ts.URL + "/iptv/f/f1/stream.ts?u=" + url.QueryEscape(up.URL+"/live/skyf11080p/2.js")
+	segURL := ts.URL + "/iptv/f/stream.ts?u=" + url.QueryEscape(up.URL+"/live/skyf11080p/2.js")
 	resp, err := http.Get(segURL)
 	if err != nil {
 		t.Fatal(err)
@@ -396,7 +394,7 @@ func TestSegmentRange(t *testing.T) {
 		return map[string]*f1net.Stream{"1080p": streamFor(up, "1080p")}
 	}, nil)
 
-	segURL := ts.URL + "/iptv/f/f1/stream.ts?u=" + url.QueryEscape(up.URL+"/live/skyf11080p/1.js")
+	segURL := ts.URL + "/iptv/f/stream.ts?u=" + url.QueryEscape(up.URL+"/live/skyf11080p/1.js")
 	req, _ := http.NewRequest(http.MethodGet, segURL, nil)
 	req.Header.Set("Range", "bytes=0-3")
 	resp, err := up.Client().Do(req)
@@ -416,21 +414,9 @@ func TestSegmentRange(t *testing.T) {
 	}
 }
 
-func TestUnknownChannel(t *testing.T) {
-	ts, _ := newServer(t, nil, nil)
-	resp, err := http.Get(ts.URL + "/iptv/stream/nope")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusNotFound {
-		t.Fatalf("status = %d", resp.StatusCode)
-	}
-}
-
 func TestOfflineChannelStream(t *testing.T) {
 	ts, _ := newServer(t, nil, map[string]error{"1080p": errors.New("offline"), "720p": errors.New("offline")})
-	resp, err := http.Get(ts.URL + "/iptv/stream/f1")
+	resp, err := http.Get(ts.URL + "/iptv/stream")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -494,7 +480,7 @@ func TestRawTSPassthrough(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, ts.URL+"/iptv/stream/f1.ts", nil)
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, ts.URL+"/iptv/stream/raw.ts", nil)
 	resp, err := up.Client().Do(req)
 	if err != nil {
 		t.Fatal(err)
@@ -529,7 +515,7 @@ func TestRawTSFlushesIncrementally(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, ts.URL+"/iptv/stream/f1.ts", nil)
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, ts.URL+"/iptv/stream/raw.ts", nil)
 	resp, err := up.Client().Do(req)
 	if err != nil {
 		t.Fatal(err)
@@ -563,7 +549,7 @@ func TestRawTSSkipsStaleSegment(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, ts.URL+"/iptv/stream/f1.ts", nil)
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, ts.URL+"/iptv/stream/raw.ts", nil)
 	resp, err := up.Client().Do(req)
 	if err != nil {
 		t.Fatal(err)
@@ -595,11 +581,11 @@ func TestRawTSMidStreamSwitch(t *testing.T) {
 		one: streamFor(up, "1080p"), // resolves to the now-dead 1080p render
 		two: streamFor(up, "720p"),  // refresh falls over to live 720p
 	}
-	ts, _ := newServerFrom(t, logger, res, testChannels, up)
+	ts, _ := newServerFrom(t, logger, res, testChannel, up)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
 	defer cancel()
-	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, ts.URL+"/iptv/stream/f1.ts", nil)
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, ts.URL+"/iptv/stream/raw.ts", nil)
 	resp, err := up.Client().Do(req)
 	if err != nil {
 		t.Fatal(err)
@@ -626,25 +612,13 @@ func TestRawTSMidStreamSwitch(t *testing.T) {
 
 func TestRawTSUnknownOffline(t *testing.T) {
 	ts, _ := newServer(t, nil, map[string]error{"1080p": errors.New("offline"), "720p": errors.New("offline")})
-	resp, err := http.Get(ts.URL + "/iptv/stream/f1.ts")
+	resp, err := http.Get(ts.URL + "/iptv/stream/raw.ts")
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusServiceUnavailable {
 		t.Fatalf("status = %d, want 503", resp.StatusCode)
-	}
-}
-
-func TestRawTSUnknownChannel(t *testing.T) {
-	ts, _ := newServer(t, nil, nil)
-	resp, err := http.Get(ts.URL + "/iptv/stream/nope.ts")
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusNotFound {
-		t.Fatalf("status = %d, want 404", resp.StatusCode)
 	}
 }
 
@@ -705,7 +679,7 @@ func TestStreamStartEndLogged(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, ts.URL+"/iptv/stream/f1.ts", nil)
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, ts.URL+"/iptv/stream/raw.ts", nil)
 	resp, err := up.Client().Do(req)
 	if err != nil {
 		t.Fatal(err)

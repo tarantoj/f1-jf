@@ -16,8 +16,6 @@ import (
 	"sync"
 	"time"
 
-	"golang.org/x/sync/singleflight"
-
 	"f1-jf/internal/ctxlog"
 	f1net "f1-jf/internal/f1net"
 )
@@ -166,21 +164,17 @@ func (f *fallbackResolver) Resolve(ctx context.Context, ch *Channel) (*f1net.Str
 	return nil, errors.Join(errs...)
 }
 
-// Registry caches each channel's resolved stream for a short TTL so playlist
-// requests pick up fresh auth tokens without hammering the source.
+// Registry caches the resolved stream for a short TTL so playlist requests
+// pick up fresh auth tokens without hammering the source. On a fresh resolve
+// failure a cached good stream is returned as a one-shot fallback.
 type Registry struct {
 	resolver Resolver
 	ttl      time.Duration
-	mu       sync.RWMutex
-	cache    map[string]cachedStream
-	group    singleflight.Group
+	mu       sync.Mutex
+	stream   *f1net.Stream
+	err      error
+	at       time.Time
 	logger   *slog.Logger
-}
-
-type cachedStream struct {
-	stream *f1net.Stream
-	err    error
-	at     time.Time
 }
 
 func NewRegistry(resolver Resolver, ttl time.Duration, logger *slog.Logger) *Registry {
@@ -193,7 +187,6 @@ func NewRegistry(resolver Resolver, ttl time.Duration, logger *slog.Logger) *Reg
 	return &Registry{
 		resolver: resolver,
 		ttl:      ttl,
-		cache:    make(map[string]cachedStream),
 		logger:   logger,
 	}
 }
@@ -204,49 +197,49 @@ func (r *Registry) log(ctx context.Context) *slog.Logger {
 	return ctxlog.FromOr(ctx, r.logger)
 }
 
-// Resolve returns the channel's stream, re-resolving once the cached entry
+// Resolve returns the channel's stream, re-resolving once the cached stream
 // is older than the TTL. If a fresh resolve fails, the last good stream is
-// returned as a fallback; if there is none, the error is returned. Concurrent
-// resolves of the same channel are coalesced into a single upstream call.
+// returned as a fallback; if there is none, the error is returned.
 func (r *Registry) Resolve(ctx context.Context, ch *Channel) (*f1net.Stream, error) {
 	log := r.log(ctx)
-	r.mu.RLock()
-	c := r.cache[ch.ID]
-	r.mu.RUnlock()
+	r.mu.Lock()
+	defer r.mu.Unlock()
 
-	if c.stream != nil && time.Since(c.at) < r.ttl {
+	if r.stream != nil && time.Since(r.at) < r.ttl {
 		log.Debug("resolution cache hit", "channel", ch.ID)
-		return c.stream, nil
+		return r.stream, nil
 	}
 
 	log.Debug("resolving channel", "channel", ch.ID)
-	v, err, _ := r.group.Do(ch.ID, func() (any, error) {
-		return r.resolver.Resolve(ctx, ch)
-	})
-	st, _ := v.(*f1net.Stream)
-
-	r.mu.Lock()
-	r.cache[ch.ID] = cachedStream{stream: st, err: err, at: time.Now()}
-	r.mu.Unlock()
-
+	st, err := r.resolver.Resolve(ctx, ch)
 	if err != nil {
-		if c.stream != nil {
+		prev := r.stream
+		age := time.Since(r.at)
+		r.stream = nil
+		r.err = err
+		r.at = time.Now()
+		if prev != nil {
 			log.Warn("resolution failed, using cached stream",
-				"channel", ch.ID, "error", err, "age", time.Since(c.at).String())
-			return c.stream, nil
+				"channel", ch.ID, "error", err, "age", age.String())
+			return prev, nil
 		}
 		log.Warn("resolution failed", "channel", ch.ID, "error", err)
 		return nil, err
 	}
+	r.stream = st
+	r.err = nil
+	r.at = time.Now()
 	log.Debug("resolved channel", "channel", ch.ID, "quality", st.Quality)
 	return st, nil
 }
 
-// Refresh drops the cached stream for the channel and re-resolves it,
-// bypassing the TTL. It returns the freshly resolved stream or its error.
+// Refresh drops the cached stream and re-resolves it, bypassing the TTL. It
+// returns the freshly resolved stream or its error.
 func (r *Registry) Refresh(ctx context.Context, ch *Channel) (*f1net.Stream, error) {
 	r.mu.Lock()
-	delete(r.cache, ch.ID)
+	r.stream = nil
+	r.err = nil
+	r.at = time.Time{}
 	r.mu.Unlock()
 	return r.Resolve(ctx, ch)
 }

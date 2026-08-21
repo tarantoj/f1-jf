@@ -21,10 +21,10 @@ func looksLikePlaylist(prefix []byte, contentType string) bool {
 }
 
 // RewritePlaylist rewrites every URI reference in an HLS playlist so that it
-// is fetched through the proxy at pubBase+/iptv/f/{channel}. Relative URIs
+// is fetched through the proxy at pubBase+/iptv/f/stream.ts. Relative URIs
 // resolve against upstreamBase (the URL the playlist was fetched from).
 // Non-playlist content is returned unchanged.
-func RewritePlaylist(content []byte, upstreamBase, pubBase, channel string) []byte {
+func RewritePlaylist(content []byte, upstreamBase, pubBase string) []byte {
 	if !looksLikePlaylist(content[:min(len(content), 16)], "") {
 		return content
 	}
@@ -36,24 +36,24 @@ func RewritePlaylist(content []byte, upstreamBase, pubBase, channel string) []by
 	case *m3u8.MediaPlaylist:
 		for i := uint(0); i < p.Count(); i++ {
 			s := p.Segments[i]
-			s.URI = rewriteURI(upstreamBase, pubBase, channel, s.URI)
+			s.URI = rewriteURI(upstreamBase, pubBase, s.URI)
 			for j := range s.Keys {
 				if s.Keys[j].URI != "" {
-					s.Keys[j].URI = rewriteURI(upstreamBase, pubBase, channel, s.Keys[j].URI)
+					s.Keys[j].URI = rewriteURI(upstreamBase, pubBase, s.Keys[j].URI)
 				}
 			}
 			if s.Map != nil && s.Map.URI != "" {
-				s.Map.URI = rewriteURI(upstreamBase, pubBase, channel, s.Map.URI)
+				s.Map.URI = rewriteURI(upstreamBase, pubBase, s.Map.URI)
 			}
 		}
 	case *m3u8.MasterPlaylist:
 		for _, v := range p.Variants {
 			if v.URI != "" {
-				v.URI = rewriteURI(upstreamBase, pubBase, channel, v.URI)
+				v.URI = rewriteURI(upstreamBase, pubBase, v.URI)
 			}
 			for _, alt := range v.Alternatives {
 				if alt.URI != "" {
-					alt.URI = rewriteURI(upstreamBase, pubBase, channel, alt.URI)
+					alt.URI = rewriteURI(upstreamBase, pubBase, alt.URI)
 				}
 			}
 		}
@@ -64,12 +64,12 @@ func RewritePlaylist(content []byte, upstreamBase, pubBase, channel string) []by
 // rewriteURI turns an HLS URI reference into an absolute URL on the proxy.
 // The path ends in /stream.ts so ffmpeg's HLS demuxer accepts the segment
 // extension (upstream segments may carry obfuscated extensions like .js).
-func rewriteURI(upstreamBase, pubBase, channel, raw string) string {
+func rewriteURI(upstreamBase, pubBase, raw string) string {
 	up := raw
 	if !strings.HasPrefix(raw, "http://") && !strings.HasPrefix(raw, "https://") {
 		up = ResolveUpstream(upstreamBase, raw)
 	}
-	return pubBase + "/iptv/f/" + channel + "/stream.ts?u=" + url.QueryEscape(up)
+	return pubBase + "/iptv/f/stream.ts?u=" + url.QueryEscape(up)
 }
 
 // ResolveUpstream resolves a possibly-relative URI against a playlist URL.
