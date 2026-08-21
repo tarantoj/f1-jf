@@ -54,8 +54,7 @@ func testAPI(t *testing.T) (*httptest.Server, func() int) {
 
 func testChannels() []*iptv.Channel {
 	return []*iptv.Channel{
-		{ID: "f1-1080p", Name: "F1 1080p"},
-		{ID: "f1-720p", Name: "F1 720p"},
+		{ID: "f1", Name: "F1"},
 	}
 }
 
@@ -76,14 +75,14 @@ func TestRenderXML(t *testing.T) {
 	if !strings.HasPrefix(text, `<?xml version="1.0"`) {
 		t.Errorf("missing xml header:\n%s", text)
 	}
-	for _, id := range []string{"f1-1080p", "f1-720p"} {
+	for _, id := range []string{"f1"} {
 		if !strings.Contains(text, `<channel id="`+id+`">`) {
 			t.Errorf("missing channel %s:\n%s", id, text)
 		}
 	}
-	// 3 non-cancelled, non-testing sessions x 2 channels.
-	if got := strings.Count(text, "<programme "); got != 6 {
-		t.Errorf("programme count = %d, want 6:\n%s", got, text)
+	// 3 non-cancelled, non-testing sessions x 1 channel.
+	if got := strings.Count(text, "<programme "); got != 3 {
+		t.Errorf("programme count = %d, want 3:\n%s", got, text)
 	}
 	for _, want := range []string{
 		`<title lang="en">2026 Bahrain Grand Prix &amp; Festival — Practice 1</title>`,
@@ -123,9 +122,9 @@ func TestRenderXMLFiltersPast(t *testing.T) {
 	}
 	text := string(xml)
 
-	// Only Qualifying and Race remain: 2 sessions x 2 channels.
-	if got := strings.Count(text, "<programme "); got != 4 {
-		t.Errorf("programme count = %d, want 4:\n%s", got, text)
+	// Only Qualifying and Race remain: 2 sessions x 1 channel.
+	if got := strings.Count(text, "<programme "); got != 2 {
+		t.Errorf("programme count = %d, want 2:\n%s", got, text)
 	}
 	if strings.Contains(text, "Practice 1") {
 		t.Errorf("past event Practice 1 not filtered:\n%s", text)

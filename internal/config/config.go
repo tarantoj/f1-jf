@@ -14,8 +14,8 @@ import (
 type Config struct {
 	Host           string        // F1IPTV_HOST (bind address; empty = all interfaces)
 	Port           int           // F1IPTV_PORT (default 8080)
-	Qualities      string        // F1IPTV_QUALITIES (comma-separated)
-	SourceURL      string        // F1IPTV_SOURCE_URL
+	Qualities      string        // F1IPTV_QUALITIES (comma-separated, ordered fallback list)
+	DashboardURL   string        // F1IPTV_DASHBOARD_URL (dashboard the source list is fetched from)
 	BaseURL        string        // F1IPTV_BASE_URL (empty = derive from request Host)
 	Group          string        // F1IPTV_GROUP (IPTV group-title)
 	ResolutionTTL  time.Duration // F1IPTV_TTL (how long to cache a resolved stream)
@@ -63,8 +63,8 @@ func Load() (*Config, error) {
 	return &Config{
 		Host:           str("F1IPTV_HOST", ""),
 		Port:           port,
-		Qualities:      str("F1IPTV_QUALITIES", "1080p,720p"),
-		SourceURL:      str("F1IPTV_SOURCE_URL", "https://streamfree.top/embed/racing/skyf1"),
+		Qualities:      str("F1IPTV_QUALITIES", "2160p,1080p,720p"),
+		DashboardURL:   str("F1IPTV_DASHBOARD_URL", "https://f1net.vercel.app"),
 		BaseURL:        str("F1IPTV_BASE_URL", ""),
 		Group:          str("F1IPTV_GROUP", "Sports"),
 		ResolutionTTL:  ttl,

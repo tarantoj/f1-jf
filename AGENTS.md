@@ -30,7 +30,7 @@ Nix:
 - `cmd/f1m3u8` — dev CLI that resolves sources to m3u8 URLs.
 - `internal/config` — 12-factor env configuration (`F1IPTV_*`).
 - `internal/f1net` — fetches the dashboard source list and resolves embed pages into playable m3u8 streams (host-specific resolvers; `registry.go` dispatches).
-- `internal/iptv` — domain: `Channel`, `Registry` (TTL-cached resolution), `ChannelsFromQualities`.
+- `internal/iptv` — domain: single `Channel` (`f1`), `Registry` (TTL-cached resolution), `fallbackResolver` (ordered quality fallback across the refreshed dashboard source list).
 - `internal/epg` — XMLTV program guide from the OpenF1 F1 calendar (cached, `RenderXML`).
 - `internal/hlsproxy` — transport-agnostic upstream fetch + HLS playlist URI rewriting.
 - `internal/httpserver` — HTTP layer: routes, handlers, slog middleware.
@@ -49,4 +49,4 @@ Nix:
 
 ## Verification
 
-Run `go test ./...` plus `nix flake check` before considering work done. A live smoke test of the service: start `go run ./cmd/f1iptv`, then curl `/healthz`, `/iptv/playlist.m3u`, `/iptv/stream/f1-1080p`, and `/iptv/guide.xml`.
+Run `go test ./...` plus `nix flake check` before considering work done. A live smoke test of the service: start `go run ./cmd/f1iptv`, then curl `/healthz`, `/iptv/playlist.m3u`, `/iptv/stream/f1`, and `/iptv/guide.xml`.

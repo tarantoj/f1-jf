@@ -94,6 +94,18 @@ Notes:
 3. Reload or trigger a quality change in the iframe player — the
    `skyf1{quality}/index.m3u8` request appears with its tokenized URL and headers.
 
+## How f1iptv resolves
+
+The f1iptv service does not hardcode a single source. It fetches the whole
+dashboard `/source.txt` list, TTL-caches it, and refreshes it lazily whenever it
+goes stale (keeping the last-good list if a refresh fails). Resolution tries
+the ordered quality fallback list (2160p → 1080p → 720p by default) as an outer
+loop and the sources as an inner loop: every source is tried at 2160p, then
+every source at 1080p, then every source at 720p, and the first success wins.
+While a raw-TS session is streaming, a dead current source triggers a
+re-resolution against a freshly refreshed source list so playback falls over to
+another working source mid-session.
+
 ## Other sources (not worth it)
 
 | Source | Why |

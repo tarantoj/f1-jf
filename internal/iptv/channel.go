@@ -1,13 +1,18 @@
 // Package iptv models the IPTV channel catalog and caches each channel's
 // resolved stream so the HTTP layer can serve a Jellyfin-compatible M3U
 // playlist and proxy the underlying HLS without re-resolving constantly.
+//
+// Resolution follows an ordered quality fallback across every embed source in
+// the dashboard source list: for each quality in the channel's list every
+// source is tried in turn, and the first success wins. The source list itself
+// is TTL-cached and refreshed lazily, keeping the last-good list on failure.
 package iptv
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
-	"strings"
 	"sync"
 	"time"
 
@@ -17,58 +22,151 @@ import (
 	f1net "f1-jf/internal/f1net"
 )
 
-// Resolver resolves an embed source into a playable stream. *f1net.Client
-// satisfies it; tests provide fakes.
-type Resolver interface {
+// StreamResolver resolves a single embed source into a playable stream at a
+// requested quality. *f1net.Client satisfies it; tests provide fakes.
+type StreamResolver interface {
 	ResolveStream(ctx context.Context, src f1net.Source, quality string) (*f1net.Stream, error)
+}
+
+// Resolver resolves a channel into a playable stream, applying whatever
+// fallback strategy it wants.
+type Resolver interface {
+	Resolve(ctx context.Context, ch *Channel) (*f1net.Stream, error)
+}
+
+// SourceLister lists the dashboard's embed sources. *f1net.Client satisfies it.
+type SourceLister interface {
+	ListSources(ctx context.Context) ([]f1net.Source, error)
 }
 
 // Channel is one IPTV channel backed by a resolved F1 stream.
 type Channel struct {
-	ID      string
-	Name    string
-	Group   string
-	Quality string
-	Source  f1net.Source
+	ID        string
+	Name      string
+	Group     string
+	Qualities []string
 }
 
-// ChannelsFromQualities builds one channel per comma-separated quality
-// ("1080p,720p", or "auto" for best-available). Empty list elements are
-// skipped; an entirely empty list or an unknown quality is an error.
-func ChannelsFromQualities(qs, group string, src f1net.Source) ([]*Channel, error) {
-	if strings.TrimSpace(qs) == "" {
-		return nil, fmt.Errorf("no qualities given")
+// validQualities are the resolutions a channel may try, tried in order.
+var validQualities = map[string]bool{
+	"540p":  true,
+	"720p":  true,
+	"1080p": true,
+	"2160p": true,
+}
+
+// NewChannel builds the single F1 channel. It errors on an empty quality list
+// or a quality that is not one of 540p/720p/1080p/2160p.
+func NewChannel(group string, qualities []string) (*Channel, error) {
+	if len(qualities) == 0 {
+		return nil, errors.New("no qualities given")
 	}
-	var out []*Channel
-	for _, q := range strings.Split(qs, ",") {
-		q = strings.TrimSpace(q)
-		switch {
-		case q == "":
-			continue
-		case q == "auto":
-			out = append(out, &Channel{
-				ID:      "f1-auto",
-				Name:    "F1 Auto",
-				Quality: "",
-				Group:   group,
-				Source:  src,
-			})
-		case q == "540p" || q == "720p" || q == "1080p" || q == "2160p":
-			out = append(out, &Channel{
-				ID:      "f1-" + q,
-				Name:    "F1 " + q,
-				Quality: q,
-				Group:   group,
-				Source:  src,
-			})
-		default:
+	for _, q := range qualities {
+		if !validQualities[q] {
 			return nil, fmt.Errorf("unknown quality %q", q)
 		}
 	}
-	if len(out) == 0 {
-		return nil, fmt.Errorf("no qualities given")
+	return &Channel{ID: "f1", Name: "F1", Group: group, Qualities: qualities}, nil
+}
+
+// fallbackResolver resolves a channel by trying every source from the
+// dashboard source list at each quality in the channel's ordered quality list.
+// The source list is TTL-cached; a stale list is kept when a refresh fails so
+// resolution keeps working through upstream hiccups.
+type fallbackResolver struct {
+	inner  StreamResolver
+	lister SourceLister
+	ttl    time.Duration
+
+	mu     sync.Mutex
+	cached []f1net.Source
+	at     time.Time
+
+	logger *slog.Logger
+}
+
+// NewFallbackResolver returns a Resolver that tries each of the channel's
+// qualities across every source returned by lister (qualities outer loop,
+// sources inner loop), returning the first successful stream. inner resolves
+// a single source+quality pair. ttl <= 0 defaults to 30s and a nil logger to
+// slog.Default().
+func NewFallbackResolver(inner StreamResolver, lister SourceLister, ttl time.Duration, logger *slog.Logger) *fallbackResolver {
+	if ttl <= 0 {
+		ttl = 30 * time.Second
 	}
-	return out, nil
+	if logger == nil {
+		logger = slog.Default()
+	}
+	return &fallbackResolver{
+		inner:  inner,
+		lister: lister,
+		ttl:    ttl,
+		logger: logger,
+	}
+}
+
+// log returns the request-scoped logger from ctx (carrying a request_id) when
+// present, otherwise the resolver's own logger.
+func (f *fallbackResolver) log(ctx context.Context) *slog.Logger {
+	if lg := ctxlog.From(ctx); lg != nil {
+		return lg
+	}
+	return f.logger
+}
+
+// sources returns the dashboard source list, cached while fresh. On a refetch
+// failure with a cached list the stale list is returned (with a warning); if
+// nothing is cached the error is propagated.
+func (f *fallbackResolver) sources(ctx context.Context) ([]f1net.Source, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+
+	if len(f.cached) > 0 && time.Since(f.at) < f.ttl {
+		return f.cached, nil
+	}
+	list, err := f.lister.ListSources(ctx)
+	if err != nil {
+		if len(f.cached) > 0 {
+			f.log(ctx).Warn("refresh source list failed, using stale list",
+				"error", err, "age", time.Since(f.at).String())
+			return f.cached, nil
+		}
+		return nil, err
+	}
+	if len(list) == 0 && len(f.cached) > 0 {
+		f.log(ctx).Warn("refresh source list empty, using stale list")
+		return f.cached, nil
+	}
+	f.cached = list
+	f.at = time.Now()
+	return list, nil
+}
+
+// Resolve tries the channel's qualities in order, each across every source.
+// The first successful resolution wins; failures are logged and aggregated.
+func (f *fallbackResolver) Resolve(ctx context.Context, ch *Channel) (*f1net.Stream, error) {
+	log := f.log(ctx)
+	sources, err := f.sources(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if len(sources) == 0 {
+		return nil, errors.New("no sources to resolve")
+	}
+	var errs []error
+	for _, q := range ch.Qualities {
+		for _, src := range sources {
+			st, err := f.inner.ResolveStream(ctx, src, q)
+			if err != nil {
+				log.Warn("resolve fallback attempt failed",
+					"source", src.Name, "quality", q, "error", err)
+				errs = append(errs, fmt.Errorf("%s: %w", src.Name, err))
+				continue
+			}
+			return st, nil
+		}
+	}
+	return nil, errors.Join(errs...)
 }
 
 // Registry caches each channel's resolved stream for a short TTL so playlist
@@ -135,7 +233,7 @@ func (r *Registry) Resolve(ctx context.Context, ch *Channel) (*f1net.Stream, err
 
 	log.Debug("resolving channel", "channel", ch.ID)
 	v, err, _ := r.group.Do(ch.ID, func() (any, error) {
-		return r.resolver.ResolveStream(ctx, ch.Source, ch.Quality)
+		return r.resolver.Resolve(ctx, ch)
 	})
 	st, _ := v.(*f1net.Stream)
 
@@ -154,4 +252,13 @@ func (r *Registry) Resolve(ctx context.Context, ch *Channel) (*f1net.Stream, err
 	}
 	log.Debug("resolved channel", "channel", ch.ID, "quality", st.Quality)
 	return st, nil
+}
+
+// Refresh drops the cached stream for the channel and re-resolves it,
+// bypassing the TTL. It returns the freshly resolved stream or its error.
+func (r *Registry) Refresh(ctx context.Context, ch *Channel) (*f1net.Stream, error) {
+	r.mu.Lock()
+	delete(r.cache, ch.ID)
+	r.mu.Unlock()
+	return r.Resolve(ctx, ch)
 }

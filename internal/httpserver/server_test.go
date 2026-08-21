@@ -21,20 +21,44 @@ import (
 	"f1-jf/internal/iptv"
 )
 
-// fakeResolver returns predetermined streams/errors per quality.
+// testChannels is the single F1 channel used by most tests.
+var testChannels = []*iptv.Channel{
+	{ID: "f1", Name: "F1", Group: "Sports", Qualities: []string{"1080p", "720p"}},
+}
+
+// fakeResolver returns predetermined streams/errors. Resolve iterates the
+// channel's qualities in order and returns the first quality that resolves.
 type fakeResolver struct {
 	streams map[string]*f1net.Stream
 	errs    map[string]error
 }
 
-func (f *fakeResolver) ResolveStream(_ context.Context, _ f1net.Source, quality string) (*f1net.Stream, error) {
-	if err := f.errs[quality]; err != nil {
-		return nil, err
-	}
-	if st := f.streams[quality]; st != nil {
-		return st, nil
+func (f *fakeResolver) Resolve(_ context.Context, ch *iptv.Channel) (*f1net.Stream, error) {
+	for _, q := range ch.Qualities {
+		if err := f.errs[q]; err != nil {
+			continue
+		}
+		if st := f.streams[q]; st != nil {
+			return st, nil
+		}
 	}
 	return nil, errors.New("no stream")
+}
+
+// switchResolver returns one stream on the first resolve and another on every
+// subsequent resolve, modeling a mid-session source/quality switch.
+type switchResolver struct {
+	calls int
+	one   *f1net.Stream
+	two   *f1net.Stream
+}
+
+func (f *switchResolver) Resolve(_ context.Context, _ *iptv.Channel) (*f1net.Stream, error) {
+	f.calls++
+	if f.calls == 1 {
+		return f.one, nil
+	}
+	return f.two, nil
 }
 
 // gateHeaders is what the upstream requires; mirroring the real streamfree
@@ -60,10 +84,14 @@ type upstreamOpts struct {
 	// slowSegments makes each segment stream in chunks with a delay between
 	// them, exercising incremental flushing.
 	slowSegments bool
+	// failQuality makes the given quality's playlist (and segments) return a
+	// 404, as if that render has gone dead.
+	failQuality string
 }
 
 // newUpstream serves a mock streamfree-like source and records whether the
-// required gate headers were seen on playlist and segment requests. An
+// required gate headers were seen on playlist and segment requests. Segments
+// carry distinct bytes per quality so a mid-stream switch is observable. An
 // optional upstreamOpts tweaks segment behaviour for streaming tests.
 func newUpstream(t *testing.T, opts ...upstreamOpts) *httptest.Server {
 	t.Helper()
@@ -72,7 +100,8 @@ func newUpstream(t *testing.T, opts ...upstreamOpts) *httptest.Server {
 		o = opts[0]
 	}
 	mux := http.NewServeMux()
-	seg := []byte("SEG1-AAAAAAAAAA-BYTES")
+	seg1080 := []byte("SEG1-AAAAAAAAAA-BYTES")
+	seg720 := []byte("SEG2-BBBBBBBBBBBB-BYTES")
 	slowChunk := []byte(strings.Repeat("S", 64<<10))
 
 	playlist := `#EXTM3U
@@ -84,66 +113,73 @@ func newUpstream(t *testing.T, opts ...upstreamOpts) *httptest.Server {
 #EXTINF:5.760,
 2.js
 `
-	mux.HandleFunc("/live/skyf11080p/index.m3u8", func(w http.ResponseWriter, r *http.Request) {
-		if !hasGate(r) {
-			http.Error(w, "missing gate headers", http.StatusForbidden)
-			return
-		}
-		w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
-		io.WriteString(w, playlist)
-	})
-	mux.HandleFunc("/live/skyf1720p/index.m3u8", func(w http.ResponseWriter, r *http.Request) {
-		if !hasGate(r) {
-			http.Error(w, "missing gate headers", http.StatusForbidden)
-			return
-		}
-		w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
-		io.WriteString(w, playlist)
-	})
-	segHandler := func(w http.ResponseWriter, r *http.Request) {
-		if !hasGate(r) {
-			http.Error(w, "missing gate headers", http.StatusForbidden)
-			return
-		}
-		if o.failSegment != "" && strings.HasSuffix(r.URL.Path, o.failSegment) {
-			http.NotFound(w, r)
-			return
-		}
-		w.Header().Set("Content-Type", "application/javascript")
-		if rg := r.Header.Get("Range"); rg != "" {
-			start, end, ok := parseRange(t, rg, len(seg))
-			if !ok {
-				http.Error(w, "bad range", http.StatusRequestedRangeNotSatisfiable)
+	playlistHandler := func(quality, pathPrefix string) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			if !hasGate(r) {
+				http.Error(w, "missing gate headers", http.StatusForbidden)
 				return
 			}
-			w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, end, len(seg)))
-			w.Header().Set("Content-Length", strconv.Itoa(end-start+1))
-			w.WriteHeader(http.StatusPartialContent)
-			w.Write(seg[start : end+1])
-			return
+			if o.failQuality == quality {
+				http.NotFound(w, r)
+				return
+			}
+			w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
+			io.WriteString(w, playlist)
 		}
-		if o.slowSegments {
-			// Stream in many chunks with a small delay between each so the
-			// client can observe bytes arriving before the segment completes.
-			flusher, _ := w.(http.Flusher)
-			for i := 0; i < 4; i++ {
-				if _, err := w.Write(slowChunk); err != nil {
+	}
+	mux.HandleFunc("/live/skyf11080p/index.m3u8", playlistHandler("1080p", "/live/skyf11080p/"))
+	mux.HandleFunc("/live/skyf1720p/index.m3u8", playlistHandler("720p", "/live/skyf1720p/"))
+
+	segHandler := func(quality string, seg []byte) http.HandlerFunc {
+		return func(w http.ResponseWriter, r *http.Request) {
+			if !hasGate(r) {
+				http.Error(w, "missing gate headers", http.StatusForbidden)
+				return
+			}
+			if o.failQuality == quality {
+				http.NotFound(w, r)
+				return
+			}
+			if o.failSegment != "" && strings.HasSuffix(r.URL.Path, o.failSegment) {
+				http.NotFound(w, r)
+				return
+			}
+			w.Header().Set("Content-Type", "application/javascript")
+			if rg := r.Header.Get("Range"); rg != "" {
+				start, end, ok := parseRange(t, rg, len(seg))
+				if !ok {
+					http.Error(w, "bad range", http.StatusRequestedRangeNotSatisfiable)
 					return
 				}
-				if flusher != nil {
-					flusher.Flush()
-				}
-				time.Sleep(100 * time.Millisecond)
+				w.Header().Set("Content-Range", fmt.Sprintf("bytes %d-%d/%d", start, end, len(seg)))
+				w.Header().Set("Content-Length", strconv.Itoa(end-start+1))
+				w.WriteHeader(http.StatusPartialContent)
+				w.Write(seg[start : end+1])
+				return
 			}
-			return
+			if o.slowSegments {
+				// Stream in many chunks with a small delay between each so the
+				// client can observe bytes arriving before the segment completes.
+				flusher, _ := w.(http.Flusher)
+				for i := 0; i < 4; i++ {
+					if _, err := w.Write(slowChunk); err != nil {
+						return
+					}
+					if flusher != nil {
+						flusher.Flush()
+					}
+					time.Sleep(100 * time.Millisecond)
+				}
+				return
+			}
+			w.Header().Set("Content-Length", strconv.Itoa(len(seg)))
+			w.Write(seg)
 		}
-		w.Header().Set("Content-Length", strconv.Itoa(len(seg)))
-		w.Write(seg)
 	}
-	mux.HandleFunc("/live/skyf11080p/1.js", segHandler)
-	mux.HandleFunc("/live/skyf11080p/2.js", segHandler)
-	mux.HandleFunc("/live/skyf1720p/1.js", segHandler)
-	mux.HandleFunc("/live/skyf1720p/2.js", segHandler)
+	mux.HandleFunc("/live/skyf11080p/1.js", segHandler("1080p", seg1080))
+	mux.HandleFunc("/live/skyf11080p/2.js", segHandler("1080p", seg1080))
+	mux.HandleFunc("/live/skyf1720p/1.js", segHandler("720p", seg720))
+	mux.HandleFunc("/live/skyf1720p/2.js", segHandler("720p", seg720))
 	return httptest.NewServer(mux)
 }
 
@@ -194,11 +230,15 @@ func newServerWithLogger(t *testing.T, logger *slog.Logger, build func(up *httpt
 	if build != nil {
 		streams = build(up)
 	}
-	reg := iptv.NewRegistry(&fakeResolver{streams: streams, errs: errs}, 0)
-	channels := []*iptv.Channel{
-		{ID: "f1-1080p", Name: "F1 1080p", Group: "Sports", Quality: "1080p"},
-		{ID: "f1-720p", Name: "F1 720p", Group: "Sports", Quality: "720p"},
-	}
+	resolver := &fakeResolver{streams: streams, errs: errs}
+	return newServerFrom(t, logger, resolver, testChannels, up, epg...)
+}
+
+// newServerFrom builds a server from an explicit resolver, channel set and
+// upstream mock.
+func newServerFrom(t *testing.T, logger *slog.Logger, resolver iptv.Resolver, channels []*iptv.Channel, up *httptest.Server, epg ...EPGRenderer) (*httptest.Server, *httptest.Server) {
+	t.Helper()
+	reg := iptv.NewRegistry(resolver, 0)
 	opts := Options{Logger: logger, Upstream: hlsproxy.NewClient(up.Client())}
 	if len(epg) > 0 {
 		opts.EPG = epg[0]
@@ -256,7 +296,7 @@ func TestReady(t *testing.T) {
 
 func TestPlaylist(t *testing.T) {
 	ts, _ := newServer(t, func(up *httptest.Server) map[string]*f1net.Stream {
-		return map[string]*f1net.Stream{"1080p": streamFor(up, "1080p"), "720p": streamFor(up, "720p")}
+		return map[string]*f1net.Stream{"1080p": streamFor(up, "1080p")}
 	}, nil)
 
 	resp, err := http.Get(ts.URL + "/iptv/playlist.m3u")
@@ -276,10 +316,8 @@ func TestPlaylist(t *testing.T) {
 		t.Fatalf("not an m3u:\n%s", text)
 	}
 	for _, want := range []string{
-		`tvg-id="f1-1080p" tvg-name="F1 1080p" group-title="Sports",F1 1080p`,
-		ts.URL + "/iptv/stream/f1-1080p.ts",
-		`tvg-id="f1-720p" tvg-name="F1 720p" group-title="Sports",F1 720p`,
-		ts.URL + "/iptv/stream/f1-720p.ts",
+		`tvg-id="f1" tvg-name="F1" group-title="Sports",F1`,
+		ts.URL + "/iptv/stream/f1.ts",
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("playlist missing %q:\n%s", want, text)
@@ -288,9 +326,7 @@ func TestPlaylist(t *testing.T) {
 }
 
 func TestPlaylistOmitsOffline(t *testing.T) {
-	ts, _ := newServer(t, func(up *httptest.Server) map[string]*f1net.Stream {
-		return map[string]*f1net.Stream{"1080p": streamFor(up, "1080p")}
-	}, map[string]error{"720p": errors.New("offline")})
+	ts, _ := newServer(t, nil, map[string]error{"1080p": errors.New("offline"), "720p": errors.New("offline")})
 
 	resp, err := http.Get(ts.URL + "/iptv/playlist.m3u")
 	if err != nil {
@@ -298,11 +334,8 @@ func TestPlaylistOmitsOffline(t *testing.T) {
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(resp.Body)
-	if strings.Contains(string(body), "f1-720p") {
+	if strings.Contains(string(body), `tvg-id="f1"`) {
 		t.Errorf("offline channel listed:\n%s", body)
-	}
-	if !strings.Contains(string(body), "f1-1080p") {
-		t.Errorf("live channel missing:\n%s", body)
 	}
 }
 
@@ -311,7 +344,7 @@ func TestStreamPlaylistRewrite(t *testing.T) {
 		return map[string]*f1net.Stream{"1080p": streamFor(up, "1080p")}
 	}, nil)
 
-	resp, err := http.Get(ts.URL + "/iptv/stream/f1-1080p")
+	resp, err := http.Get(ts.URL + "/iptv/stream/f1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -326,7 +359,7 @@ func TestStreamPlaylistRewrite(t *testing.T) {
 	body, _ := io.ReadAll(resp.Body)
 	text := string(body)
 
-	wantSeg := ts.URL + "/iptv/f/f1-1080p/stream.ts?u=" + url.QueryEscape(up.URL+"/live/skyf11080p/1.js")
+	wantSeg := ts.URL + "/iptv/f/f1/stream.ts?u=" + url.QueryEscape(up.URL+"/live/skyf11080p/1.js")
 	if !strings.Contains(text, wantSeg) {
 		t.Errorf("segment 1 not rewritten to proxy:\n%s", text)
 	}
@@ -340,7 +373,7 @@ func TestSegmentPassthrough(t *testing.T) {
 		return map[string]*f1net.Stream{"1080p": streamFor(up, "1080p")}
 	}, nil)
 
-	segURL := ts.URL + "/iptv/f/f1-1080p/stream.ts?u=" + url.QueryEscape(up.URL+"/live/skyf11080p/2.js")
+	segURL := ts.URL + "/iptv/f/f1/stream.ts?u=" + url.QueryEscape(up.URL+"/live/skyf11080p/2.js")
 	resp, err := http.Get(segURL)
 	if err != nil {
 		t.Fatal(err)
@@ -363,7 +396,7 @@ func TestSegmentRange(t *testing.T) {
 		return map[string]*f1net.Stream{"1080p": streamFor(up, "1080p")}
 	}, nil)
 
-	segURL := ts.URL + "/iptv/f/f1-1080p/stream.ts?u=" + url.QueryEscape(up.URL+"/live/skyf11080p/1.js")
+	segURL := ts.URL + "/iptv/f/f1/stream.ts?u=" + url.QueryEscape(up.URL+"/live/skyf11080p/1.js")
 	req, _ := http.NewRequest(http.MethodGet, segURL, nil)
 	req.Header.Set("Range", "bytes=0-3")
 	resp, err := up.Client().Do(req)
@@ -396,8 +429,8 @@ func TestUnknownChannel(t *testing.T) {
 }
 
 func TestOfflineChannelStream(t *testing.T) {
-	ts, _ := newServer(t, nil, map[string]error{"1080p": errors.New("offline")})
-	resp, err := http.Get(ts.URL + "/iptv/stream/f1-1080p")
+	ts, _ := newServer(t, nil, map[string]error{"1080p": errors.New("offline"), "720p": errors.New("offline")})
+	resp, err := http.Get(ts.URL + "/iptv/stream/f1")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -409,7 +442,7 @@ func TestOfflineChannelStream(t *testing.T) {
 
 func TestGuide(t *testing.T) {
 	doc := []byte(`<?xml version="1.0" encoding="UTF-8"?>
-<tv generator-info-name="f1-jf"><channel id="f1-1080p"/></tv>
+<tv generator-info-name="f1-jf"><channel id="f1"/></tv>
 `)
 	ts, _ := newServer(t, nil, nil, &fakeEPG{doc: doc})
 
@@ -425,7 +458,7 @@ func TestGuide(t *testing.T) {
 		t.Errorf("content-type = %q", ct)
 	}
 	body, _ := io.ReadAll(resp.Body)
-	if !strings.Contains(string(body), `<channel id="f1-1080p"/>`) {
+	if !strings.Contains(string(body), `<channel id="f1"/>`) {
 		t.Errorf("guide body = %q", body)
 	}
 }
@@ -461,7 +494,7 @@ func TestRawTSPassthrough(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, ts.URL+"/iptv/stream/f1-1080p.ts", nil)
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, ts.URL+"/iptv/stream/f1.ts", nil)
 	resp, err := up.Client().Do(req)
 	if err != nil {
 		t.Fatal(err)
@@ -496,7 +529,7 @@ func TestRawTSFlushesIncrementally(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, ts.URL+"/iptv/stream/f1-1080p.ts", nil)
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, ts.URL+"/iptv/stream/f1.ts", nil)
 	resp, err := up.Client().Do(req)
 	if err != nil {
 		t.Fatal(err)
@@ -530,7 +563,7 @@ func TestRawTSSkipsStaleSegment(t *testing.T) {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, ts.URL+"/iptv/stream/f1-1080p.ts", nil)
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, ts.URL+"/iptv/stream/f1.ts", nil)
 	resp, err := up.Client().Do(req)
 	if err != nil {
 		t.Fatal(err)
@@ -552,9 +585,48 @@ func TestRawTSSkipsStaleSegment(t *testing.T) {
 	}
 }
 
+// TestRawTSMidStreamSwitch verifies that when the currently-streaming quality
+// goes dead, the raw TS stream re-resolves (Refresh) and falls over to the
+// next working quality, delivering that quality's distinct segment bytes.
+func TestRawTSMidStreamSwitch(t *testing.T) {
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+	up := newUpstream(t, upstreamOpts{failQuality: "1080p"})
+	res := &switchResolver{
+		one: streamFor(up, "1080p"), // resolves to the now-dead 1080p render
+		two: streamFor(up, "720p"),  // refresh falls over to live 720p
+	}
+	ts, _ := newServerFrom(t, logger, res, testChannels, up)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, ts.URL+"/iptv/stream/f1.ts", nil)
+	resp, err := up.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("status = %d: %s", resp.StatusCode, body)
+	}
+
+	// After the 1080p render dies and the stream switches, the body must
+	// deliver the 720p segment bytes.
+	buf := make([]byte, len("SEG2-BBBBBBBBBBBB-BYTES"))
+	if _, err := io.ReadFull(resp.Body, buf); err != nil {
+		t.Fatalf("read ts stream: %v", err)
+	}
+	if string(buf) != "SEG2-BBBBBBBBBBBB-BYTES" {
+		t.Errorf("ts body = %q, want 720p bytes after switch", buf)
+	}
+	if res.calls < 2 {
+		t.Errorf("resolver re-resolve calls = %d, want >= 2", res.calls)
+	}
+}
+
 func TestRawTSUnknownOffline(t *testing.T) {
-	ts, _ := newServer(t, nil, map[string]error{"1080p": errors.New("offline")})
-	resp, err := http.Get(ts.URL + "/iptv/stream/f1-1080p.ts")
+	ts, _ := newServer(t, nil, map[string]error{"1080p": errors.New("offline"), "720p": errors.New("offline")})
+	resp, err := http.Get(ts.URL + "/iptv/stream/f1.ts")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -633,7 +705,7 @@ func TestStreamStartEndLogged(t *testing.T) {
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
-	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, ts.URL+"/iptv/stream/f1-1080p.ts", nil)
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, ts.URL+"/iptv/stream/f1.ts", nil)
 	resp, err := up.Client().Do(req)
 	if err != nil {
 		t.Fatal(err)
@@ -657,7 +729,7 @@ func TestStreamStartEndLogged(t *testing.T) {
 	if !strings.Contains(out, "stream ended") {
 		t.Errorf("missing stream ended log:\n%s", out)
 	}
-	if !strings.Contains(out, "channel=f1-1080p") {
+	if !strings.Contains(out, "channel=f1") {
 		t.Errorf("stream logs missing channel:\n%s", out)
 	}
 }

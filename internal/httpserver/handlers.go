@@ -94,9 +94,17 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 
 	up, err := s.upstream.Fetch(r.Context(), st.Headers, st.PlaylistURL, "")
 	if err != nil {
-		s.logger(r.Context()).Warn("fetch playlist", "channel", ch.ID, "error", err)
-		http.Error(w, "upstream unreachable", http.StatusBadGateway)
-		return
+		if st2, err2 := s.registry.Refresh(r.Context(), ch); err2 == nil && st2 != nil {
+			s.logger(r.Context()).Info("stream switched", "channel", ch.ID,
+				"quality", st2.Quality, "error", err)
+			st = st2
+			up, err = s.upstream.Fetch(r.Context(), st.Headers, st.PlaylistURL, "")
+		}
+		if err != nil {
+			s.logger(r.Context()).Warn("fetch playlist", "channel", ch.ID, "error", err)
+			http.Error(w, "upstream unreachable", http.StatusBadGateway)
+			return
+		}
 	}
 	defer up.Body.Close()
 	s.serveUpstream(w, r, ch, up, st.PlaylistURL)
@@ -116,6 +124,8 @@ func (s *Server) serveRawTS(w http.ResponseWriter, r *http.Request, ch *iptv.Cha
 	log.Info("stream started", "channel", ch.ID, "quality", st.Quality)
 
 	sent := make(map[string]bool)
+	var failCount int
+	var lastSwitch time.Time
 	// Wrap the writer so bytes are flushed continuously during segment
 	// downloads instead of only when a full segment has been buffered. This
 	// gets data to the client (e.g. Jellyfin ffmpeg) as it arrives.
@@ -126,7 +136,20 @@ func (s *Server) serveRawTS(w http.ResponseWriter, r *http.Request, ch *iptv.Cha
 			if ctx.Err() != nil {
 				break
 			}
-			log.Warn("ts stream", "channel", ch.ID, "error", err)
+			log.Warn("ts stream", "channel", ch.ID, "quality", st.Quality, "error", err)
+			failCount++
+			if failCount > 2 && time.Since(lastSwitch) >= 10*time.Second {
+				if newSt, rerr := s.registry.Refresh(ctx, ch); rerr == nil && newSt != nil {
+					log.Info("stream switched", "channel", ch.ID,
+						"quality", newSt.Quality, "error", err)
+					st = newSt
+					failCount = 0
+					lastSwitch = time.Now()
+					sent = make(map[string]bool)
+				} else {
+					log.Warn("stream refresh for ts fallback failed", "channel", ch.ID, "error", rerr)
+				}
+			}
 			select {
 			case <-ctx.Done():
 				return
@@ -134,6 +157,7 @@ func (s *Server) serveRawTS(w http.ResponseWriter, r *http.Request, ch *iptv.Cha
 			}
 			continue
 		}
+		failCount = 0
 		bw.Flush()
 		select {
 		case <-ctx.Done():

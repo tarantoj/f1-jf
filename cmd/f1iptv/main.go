@@ -42,13 +42,20 @@ func run() error {
 	logger := newLogger(cfg.LogLevel)
 	slog.SetDefault(logger)
 
-	f1 := &f1net.Client{VerifyPlaylist: cfg.VerifyPlaylist, Logger: logger}
-	registry := iptv.NewRegistryLogger(f1, cfg.ResolutionTTL, logger)
+	f1 := &f1net.Client{BaseURL: cfg.DashboardURL, VerifyPlaylist: cfg.VerifyPlaylist, Logger: logger}
+	registry := iptv.NewRegistryLogger(iptv.NewFallbackResolver(f1, f1, cfg.ResolutionTTL, logger), cfg.ResolutionTTL, logger)
 
-	channels, err := iptv.ChannelsFromQualities(cfg.Qualities, cfg.Group, f1net.Source{Name: "F1", URL: cfg.SourceURL})
+	var qualities []string
+	for _, q := range strings.Split(cfg.Qualities, ",") {
+		if q = strings.TrimSpace(q); q != "" {
+			qualities = append(qualities, q)
+		}
+	}
+	ch, err := iptv.NewChannel(cfg.Group, qualities)
 	if err != nil {
 		return err
 	}
+	channels := []*iptv.Channel{ch}
 
 	prewarm(registry, channels, logger)
 

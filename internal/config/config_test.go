@@ -9,7 +9,7 @@ func TestLoadDefaults(t *testing.T) {
 	t.Setenv("F1IPTV_HOST", "")
 	t.Setenv("F1IPTV_PORT", "")
 	t.Setenv("F1IPTV_QUALITIES", "")
-	t.Setenv("F1IPTV_SOURCE_URL", "")
+	t.Setenv("F1IPTV_DASHBOARD_URL", "")
 	t.Setenv("F1IPTV_BASE_URL", "")
 	t.Setenv("F1IPTV_GROUP", "")
 	t.Setenv("F1IPTV_TTL", "")
@@ -33,11 +33,11 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.Addr() != ":8080" {
 		t.Errorf("Addr() = %q, want :8080", cfg.Addr())
 	}
-	if cfg.Qualities != "1080p,720p" {
+	if cfg.Qualities != "2160p,1080p,720p" {
 		t.Errorf("Qualities = %q", cfg.Qualities)
 	}
-	if cfg.SourceURL != "https://streamfree.top/embed/racing/skyf1" {
-		t.Errorf("SourceURL = %q", cfg.SourceURL)
+	if cfg.DashboardURL != "https://f1net.vercel.app" {
+		t.Errorf("DashboardURL = %q", cfg.DashboardURL)
 	}
 	if cfg.BaseURL != "" {
 		t.Errorf("BaseURL = %q", cfg.BaseURL)
@@ -72,7 +72,7 @@ func TestLoadOverrides(t *testing.T) {
 	t.Setenv("F1IPTV_HOST", "")
 	t.Setenv("F1IPTV_PORT", "9999")
 	t.Setenv("F1IPTV_QUALITIES", "720p")
-	t.Setenv("F1IPTV_SOURCE_URL", "https://example.com/embed")
+	t.Setenv("F1IPTV_DASHBOARD_URL", "https://example.com")
 	t.Setenv("F1IPTV_BASE_URL", "https://f1.example.com")
 	t.Setenv("F1IPTV_GROUP", "Racing")
 	t.Setenv("F1IPTV_TTL", "5s")
@@ -88,7 +88,7 @@ func TestLoadOverrides(t *testing.T) {
 		t.Fatalf("Load: %v", err)
 	}
 	if cfg.Addr() != ":9999" || cfg.Port != 9999 || cfg.Qualities != "720p" ||
-		cfg.SourceURL != "https://example.com/embed" ||
+		cfg.DashboardURL != "https://example.com" ||
 		cfg.BaseURL != "https://f1.example.com" ||
 		cfg.Group != "Racing" ||
 		cfg.ResolutionTTL != 5*time.Second ||

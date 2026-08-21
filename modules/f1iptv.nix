@@ -35,14 +35,14 @@ in
 
     qualities = lib.mkOption {
       type = lib.types.str;
-      default = "1080p,720p";
-      description = "Comma-separated qualities to expose as channels (F1IPTV_QUALITIES).";
+      default = "2160p,1080p,720p";
+      description = "Comma-separated ordered fallback list of qualities to try across every source (F1IPTV_QUALITIES).";
     };
 
-    sourceURL = lib.mkOption {
+    dashboardURL = lib.mkOption {
       type = lib.types.str;
-      default = "https://streamfree.top/embed/racing/skyf1";
-      description = "Embed source URL to resolve (F1IPTV_SOURCE_URL).";
+      default = "https://f1net.vercel.app";
+      description = "Dashboard origin the source list is fetched from (F1IPTV_DASHBOARD_URL).";
     };
 
     baseURL = lib.mkOption {
@@ -138,7 +138,7 @@ in
         F1IPTV_HOST = cfg.host;
         F1IPTV_PORT = toString cfg.port;
         F1IPTV_QUALITIES = cfg.qualities;
-        F1IPTV_SOURCE_URL = cfg.sourceURL;
+        F1IPTV_DASHBOARD_URL = cfg.dashboardURL;
         F1IPTV_BASE_URL = cfg.baseURL;
         F1IPTV_GROUP = cfg.group;
         F1IPTV_TTL = cfg.ttl;
