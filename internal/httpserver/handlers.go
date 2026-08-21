@@ -2,11 +2,17 @@ package httpserver
 
 import (
 	"bufio"
+	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"net/http"
 	"strings"
+	"time"
 
+	m3u8 "github.com/Eyevinn/hls-m3u8/m3u8"
+
+	f1net "f1-jf/internal/f1net"
 	"f1-jf/internal/hlsproxy"
 	"f1-jf/internal/iptv"
 )
@@ -52,7 +58,7 @@ func (s *Server) handlePlaylist(w http.ResponseWriter, r *http.Request) {
 		}
 		fmt.Fprintf(&b, `#EXTINF:-1 tvg-id=%q tvg-name=%q group-title=%q,%s`+"\n",
 			ch.ID, ch.Name, ch.Group, ch.Name)
-		fmt.Fprintf(&b, "%s/iptv/stream/%s\n", s.publicBase(r), ch.ID)
+		fmt.Fprintf(&b, "%s/iptv/stream/%s.ts\n", s.publicBase(r), ch.ID)
 	}
 
 	w.Header().Set("Content-Type", "application/x-mpegurl; charset=utf-8")
@@ -60,11 +66,18 @@ func (s *Server) handlePlaylist(w http.ResponseWriter, r *http.Request) {
 	io.WriteString(w, b.String())
 }
 
-// handleStream serves the channel's live HLS playlist, re-fetched upstream
+// handleStream serves the channel's live stream. When the route is requested
+// with a .ts suffix it returns a continuous raw MPEG-TS stream (concatenated
+// upstream segments), which makes Jellyfin pick its SharedHttpStream proxy
+// path instead of handing the m3u8 and its segment URLs directly to clients.
+// Otherwise it serves the channel's live HLS playlist, re-fetched upstream
 // with the required headers and rewritten so all segment (and nested
 // playlist) requests go through the proxy.
 func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
-	ch, ok := s.channel(r.PathValue("channel"))
+	chName := r.PathValue("channel")
+	rawTS := strings.HasSuffix(chName, ".ts")
+	chID := strings.TrimSuffix(chName, ".ts")
+	ch, ok := s.channel(chID)
 	if !ok {
 		http.NotFound(w, r)
 		return
@@ -72,6 +85,10 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 	st, err := s.registry.Resolve(r.Context(), ch)
 	if err != nil || st == nil {
 		http.Error(w, "stream offline", http.StatusServiceUnavailable)
+		return
+	}
+	if rawTS {
+		s.serveRawTS(w, r, ch, st)
 		return
 	}
 
@@ -83,6 +100,88 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 	}
 	defer up.Body.Close()
 	s.serveUpstream(w, r, ch, up, st.PlaylistURL)
+}
+
+// serveRawTS streams the channel's upstream HLS as continuous MPEG-TS,
+// concatenating each segment's raw bytes and following the live playlist as
+// new segments appear. The response is chunked and has no Content-Length.
+func (s *Server) serveRawTS(w http.ResponseWriter, r *http.Request, ch *iptv.Channel, st *f1net.Stream) {
+	ctx := r.Context()
+	w.Header().Set("Content-Type", "video/mp2t")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.WriteHeader(http.StatusOK)
+
+	sent := make(map[string]bool)
+	flusher, _ := w.(http.Flusher)
+	for {
+		if err := s.streamTSWindow(ctx, st, sent, w, flusher); err != nil {
+			if ctx.Err() != nil {
+				return
+			}
+			s.log.Warn("ts stream", "channel", ch.ID, "error", err)
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(2 * time.Second):
+			}
+			continue
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-time.After(2 * time.Second):
+		}
+	}
+}
+
+// streamTSWindow fetches the current live media playlist once and streams any
+// segments not yet sent. It returns without error when a full playlist pass
+// completed (so serveRawTS can wait and re-poll); a non-nil error means the
+// pass should be retried after backoff.
+func (s *Server) streamTSWindow(ctx context.Context, st *f1net.Stream, sent map[string]bool, w io.Writer, flusher http.Flusher) error {
+	up, err := s.upstream.Fetch(ctx, st.Headers, st.PlaylistURL, "")
+	if err != nil {
+		return err
+	}
+	defer up.Body.Close()
+	content, err := io.ReadAll(io.LimitReader(up.Body, hlsproxy.MaxPlaylistBytes))
+	if err != nil {
+		return err
+	}
+	pl, _, err := m3u8.DecodeFrom(bytes.NewReader(content), false)
+	if err != nil {
+		return err
+	}
+	mp, ok := pl.(*m3u8.MediaPlaylist)
+	if !ok {
+		return fmt.Errorf("not a media playlist")
+	}
+	finished := false
+	for i := uint(0); i < mp.Count(); i++ {
+		seg := mp.Segments[i]
+		if sent[seg.URI] {
+			finished = true
+			continue
+		}
+		segURL := hlsproxy.ResolveUpstream(st.PlaylistURL, seg.URI)
+		segUp, err := s.upstream.Fetch(ctx, st.Headers, segURL, "")
+		if err != nil {
+			return err
+		}
+		_, copyErr := io.Copy(w, segUp.Body)
+		segUp.Body.Close()
+		if copyErr != nil {
+			return copyErr
+		}
+		sent[seg.URI] = true
+		if flusher != nil {
+			flusher.Flush()
+		}
+	}
+	if finished {
+		return nil
+	}
+	return nil
 }
 
 // handleFetch is the generic upstream forwarder: it fetches a proxied URI

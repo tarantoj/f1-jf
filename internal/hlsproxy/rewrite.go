@@ -93,3 +93,9 @@ func resolveUpstream(playlistURL, raw string) string {
 	u.RawQuery = ""
 	return u.String()
 }
+
+// ResolveUpstream resolves a (possibly relative) segment URI against a
+// playlist URL, returning an absolute upstream URL suitable for Fetch.
+func ResolveUpstream(playlistURL, raw string) string {
+	return resolveUpstream(playlistURL, raw)
+}

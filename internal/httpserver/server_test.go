@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	f1net "f1-jf/internal/f1net"
 	"f1-jf/internal/hlsproxy"
@@ -229,9 +230,9 @@ func TestPlaylist(t *testing.T) {
 	}
 	for _, want := range []string{
 		`tvg-id="f1-1080p" tvg-name="F1 1080p" group-title="Sports",F1 1080p`,
-		ts.URL + "/iptv/stream/f1-1080p",
+		ts.URL + "/iptv/stream/f1-1080p.ts",
 		`tvg-id="f1-720p" tvg-name="F1 720p" group-title="Sports",F1 720p`,
-		ts.URL + "/iptv/stream/f1-720p",
+		ts.URL + "/iptv/stream/f1-720p.ts",
 	} {
 		if !strings.Contains(text, want) {
 			t.Errorf("playlist missing %q:\n%s", want, text)
@@ -403,5 +404,60 @@ func TestGuideError(t *testing.T) {
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusServiceUnavailable {
 		t.Fatalf("status = %d, want 503", resp.StatusCode)
+	}
+}
+
+func TestRawTSPassthrough(t *testing.T) {
+	ts, up := newServer(t, func(up *httptest.Server) map[string]*f1net.Stream {
+		return map[string]*f1net.Stream{"1080p": streamFor(up, "1080p")}
+	}, nil)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, ts.URL+"/iptv/stream/f1-1080p.ts", nil)
+	resp, err := up.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("status = %d: %s", resp.StatusCode, body)
+	}
+	if ct := resp.Header.Get("Content-Type"); ct != "video/mp2t" {
+		t.Errorf("content-type = %q, want video/mp2t", ct)
+	}
+	// The mock serves two identical segments; expect both, concatenated.
+	want := strings.Repeat("SEG1-AAAAAAAAAA-BYTES", 2)
+	buf := make([]byte, len(want))
+	if _, err := io.ReadFull(resp.Body, buf); err != nil {
+		t.Fatalf("read ts stream: %v", err)
+	}
+	if string(buf) != want {
+		t.Errorf("ts body = %q, want %q", buf, want)
+	}
+}
+
+func TestRawTSUnknownOffline(t *testing.T) {
+	ts, _ := newServer(t, nil, map[string]error{"1080p": errors.New("offline")})
+	resp, err := http.Get(ts.URL + "/iptv/stream/f1-1080p.ts")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusServiceUnavailable {
+		t.Fatalf("status = %d, want 503", resp.StatusCode)
+	}
+}
+
+func TestRawTSUnknownChannel(t *testing.T) {
+	ts, _ := newServer(t, nil, nil)
+	resp, err := http.Get(ts.URL + "/iptv/stream/nope.ts")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusNotFound {
+		t.Fatalf("status = %d, want 404", resp.StatusCode)
 	}
 }
