@@ -14,5 +14,6 @@ type resolver interface {
 
 // resolvers dispatches embed URLs by hostname to their resolver.
 var resolvers = map[string]resolver{
-	"streamfree.top": streamfreeResolver{},
+	"streamfree.top":    streamfreeResolver{},
+	"cdx-08192.website": cdxResolver{},
 }
