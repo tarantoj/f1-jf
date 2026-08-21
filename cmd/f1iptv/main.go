@@ -57,6 +57,9 @@ func run() error {
 	}
 	channels := []*iptv.Channel{ch}
 
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
 	prewarm(registry, channels, logger)
 
 	var epgSvc *epg.Service
@@ -71,6 +74,7 @@ func run() error {
 			TTL:    cfg.EPGTTL,
 			Logger: logger,
 		})
+		prewarmEPG(ctx, epgSvc, logger)
 	}
 
 	server := httpserver.New(registry, channels, httpserver.Options{
@@ -85,9 +89,6 @@ func run() error {
 		Handler:           server.Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 	}
-
-	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
-	defer stop()
 
 	errCh := make(chan error, 1)
 	go func() {
@@ -130,6 +131,21 @@ func prewarm(registry *iptv.Registry, channels []*iptv.Channel, logger *slog.Log
 			}
 		}(ch)
 	}
+}
+
+// prewarmEPG warms the EPG calendar cache once in the background so the first
+// guide request hits a warm cache instead of fetching inline during a live
+// window. It never blocks startup or fails the service; failures are logged
+// and the cache is populated lazily later. A fetch timeout bounds the request,
+// and the shutdown context cancels it on shutdown.
+func prewarmEPG(ctx context.Context, epgSvc *epg.Service, logger *slog.Logger) {
+	go func() {
+		ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+		if _, err := epgSvc.Schedule(ctx); err != nil {
+			logger.Warn("epg prewarm failed", "error", err)
+		}
+	}()
 }
 
 // newLogger builds a structured logger at the requested level.
