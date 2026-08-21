@@ -51,12 +51,27 @@ func hasGate(r *http.Request) bool {
 		r.Header.Get("User-Agent") == "f1-test-agent"
 }
 
+// upstreamOpts configures the mock upstream's segment behaviour.
+type upstreamOpts struct {
+	// failSegment makes the named segment (e.g. "1.js") return a 404.
+	failSegment string
+	// slowSegments makes each segment stream in chunks with a delay between
+	// them, exercising incremental flushing.
+	slowSegments bool
+}
+
 // newUpstream serves a mock streamfree-like source and records whether the
-// required gate headers were seen on playlist and segment requests.
-func newUpstream(t *testing.T) *httptest.Server {
+// required gate headers were seen on playlist and segment requests. An
+// optional upstreamOpts tweaks segment behaviour for streaming tests.
+func newUpstream(t *testing.T, opts ...upstreamOpts) *httptest.Server {
 	t.Helper()
+	var o upstreamOpts
+	if len(opts) > 0 {
+		o = opts[0]
+	}
 	mux := http.NewServeMux()
 	seg := []byte("SEG1-AAAAAAAAAA-BYTES")
+	slowChunk := []byte(strings.Repeat("S", 64<<10))
 
 	playlist := `#EXTM3U
 #EXT-X-VERSION:3
@@ -88,6 +103,10 @@ func newUpstream(t *testing.T) *httptest.Server {
 			http.Error(w, "missing gate headers", http.StatusForbidden)
 			return
 		}
+		if o.failSegment != "" && strings.HasSuffix(r.URL.Path, o.failSegment) {
+			http.NotFound(w, r)
+			return
+		}
 		w.Header().Set("Content-Type", "application/javascript")
 		if rg := r.Header.Get("Range"); rg != "" {
 			start, end, ok := parseRange(t, rg, len(seg))
@@ -99,6 +118,21 @@ func newUpstream(t *testing.T) *httptest.Server {
 			w.Header().Set("Content-Length", strconv.Itoa(end-start+1))
 			w.WriteHeader(http.StatusPartialContent)
 			w.Write(seg[start : end+1])
+			return
+		}
+		if o.slowSegments {
+			// Stream in many chunks with a small delay between each so the
+			// client can observe bytes arriving before the segment completes.
+			flusher, _ := w.(http.Flusher)
+			for i := 0; i < 4; i++ {
+				if _, err := w.Write(slowChunk); err != nil {
+					return
+				}
+				if flusher != nil {
+					flusher.Flush()
+				}
+				time.Sleep(100 * time.Millisecond)
+			}
 			return
 		}
 		w.Header().Set("Content-Length", strconv.Itoa(len(seg)))
@@ -140,8 +174,14 @@ func parseRange(t *testing.T, rg string, size int) (int, int, bool) {
 // streams can be wired to it; errs makes the given qualities fail to resolve.
 // An optional EPGRenderer enables the guide endpoint.
 func newServer(t *testing.T, build func(up *httptest.Server) map[string]*f1net.Stream, errs map[string]error, epg ...EPGRenderer) (*httptest.Server, *httptest.Server) {
+	return newServerWith(t, build, errs, upstreamOpts{}, epg...)
+}
+
+// newServerWith is newServer but with control over the mock upstream's
+// segment behaviour (see upstreamOpts).
+func newServerWith(t *testing.T, build func(up *httptest.Server) map[string]*f1net.Stream, errs map[string]error, uo upstreamOpts, epg ...EPGRenderer) (*httptest.Server, *httptest.Server) {
 	t.Helper()
-	up := newUpstream(t)
+	up := newUpstream(t, uo)
 	var streams map[string]*f1net.Stream
 	if build != nil {
 		streams = build(up)
@@ -435,6 +475,73 @@ func TestRawTSPassthrough(t *testing.T) {
 	}
 	if string(buf) != want {
 		t.Errorf("ts body = %q, want %q", buf, want)
+	}
+}
+
+// TestRawTSFlushesIncrementally verifies a .ts stream delivers bytes as they
+// arrive rather than waiting for a whole (slow) segment to download first.
+// The mock streams each segment in 10 chunks over ~2.5s; the client must
+// observe its first bytes well before the segment completes.
+func TestRawTSFlushesIncrementally(t *testing.T) {
+	ts, up := newServerWith(t, func(up *httptest.Server) map[string]*f1net.Stream {
+		return map[string]*f1net.Stream{"1080p": streamFor(up, "1080p")}
+	}, nil, upstreamOpts{slowSegments: true})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, ts.URL+"/iptv/stream/f1-1080p.ts", nil)
+	resp, err := up.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("status = %d: %s", resp.StatusCode, body)
+	}
+
+	// A full segment takes ~2.5s to stream. The first chunk must arrive
+	// promptly; if the proxy buffered the entire segment before flushing the
+	// first read would block for the full duration. Allow generous margin.
+	start := time.Now()
+	first := make([]byte, 1)
+	if _, err := resp.Body.Read(first); err != nil {
+		t.Fatalf("first read: %v", err)
+	}
+	if elapsed := time.Since(start); elapsed > 1500*time.Millisecond {
+		t.Errorf("first bytes took %v, want < 1.5s (incremental flush)", elapsed)
+	}
+}
+
+// TestRawTSSkipsStaleSegment verifies a stale segment at the front of the
+// live window (which 404s upstream) no longer stalls playback: the fresher
+// segments must still be delivered.
+func TestRawTSSkipsStaleSegment(t *testing.T) {
+	ts, up := newServerWith(t, func(up *httptest.Server) map[string]*f1net.Stream {
+		return map[string]*f1net.Stream{"1080p": streamFor(up, "1080p")}
+	}, nil, upstreamOpts{failSegment: "1.js"})
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, ts.URL+"/iptv/stream/f1-1080p.ts", nil)
+	resp, err := up.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		t.Fatalf("status = %d: %s", resp.StatusCode, body)
+	}
+
+	// Segment 1 (1.js) is stale and 404s; segment 2 (2.js) must still be
+	// streamed. Read enough bytes to confirm the surviving segment arrived.
+	buf := make([]byte, len("SEG1-AAAAAAAAAA-BYTES"))
+	if _, err := io.ReadFull(resp.Body, buf); err != nil {
+		t.Fatalf("read ts stream: %v", err)
+	}
+	if string(buf) != "SEG1-AAAAAAAAAA-BYTES" {
+		t.Errorf("ts body = %q", buf)
 	}
 }
 

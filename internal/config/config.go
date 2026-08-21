@@ -36,7 +36,7 @@ func (c *Config) Addr() string {
 // Load reads configuration from the environment, applying defaults for any
 // unset variable. It returns an error for malformed values.
 func Load() (*Config, error) {
-	ttl, err := duration("F1IPTV_TTL", 30*time.Second)
+	ttl, err := duration("F1IPTV_TTL", 5*time.Minute)
 	if err != nil {
 		return nil, err
 	}

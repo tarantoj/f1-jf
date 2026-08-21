@@ -112,9 +112,13 @@ func (s *Server) serveRawTS(w http.ResponseWriter, r *http.Request, ch *iptv.Cha
 	w.WriteHeader(http.StatusOK)
 
 	sent := make(map[string]bool)
-	flusher, _ := w.(http.Flusher)
+	// Wrap the writer so bytes are flushed continuously during segment
+	// downloads instead of only when a full segment has been buffered. This
+	// gets data to the client (e.g. Jellyfin ffmpeg) as it arrives.
+	bw := bufio.NewWriterSize(&flushWriter{w: w}, 32<<10)
 	for {
-		if err := s.streamTSWindow(ctx, st, sent, w, flusher); err != nil {
+		if err := s.streamTSWindow(ctx, st, sent, bw); err != nil {
+			bw.Flush()
 			if ctx.Err() != nil {
 				return
 			}
@@ -126,6 +130,7 @@ func (s *Server) serveRawTS(w http.ResponseWriter, r *http.Request, ch *iptv.Cha
 			}
 			continue
 		}
+		bw.Flush()
 		select {
 		case <-ctx.Done():
 			return
@@ -134,11 +139,28 @@ func (s *Server) serveRawTS(w http.ResponseWriter, r *http.Request, ch *iptv.Cha
 	}
 }
 
+// flushWriter flushes the underlying http.ResponseWriter after every Write so
+// streaming responses reach the client incrementally rather than in one burst.
+type flushWriter struct {
+	w http.ResponseWriter
+}
+
+func (f *flushWriter) Write(p []byte) (int, error) {
+	n, err := f.w.Write(p)
+	if flusher, ok := f.w.(http.Flusher); ok && n > 0 {
+		flusher.Flush()
+	}
+	return n, err
+}
+
 // streamTSWindow fetches the current live media playlist once and streams any
-// segments not yet sent. It returns without error when a full playlist pass
-// completed (so serveRawTS can wait and re-poll); a non-nil error means the
-// pass should be retried after backoff.
-func (s *Server) streamTSWindow(ctx context.Context, st *f1net.Stream, sent map[string]bool, w io.Writer, flusher http.Flusher) error {
+// segments not yet sent, concatenated as raw MPEG-TS. Segments are shipped in
+// playlist order. A single segment fetch error is logged and skipped — rather
+// than aborting the whole pass and triggering a backoff retry — so a stale
+// segment at the front of the sliding live window no longer stalls playback.
+// The pass only fails if no segment could be fetched, so serveRawTS can retry
+// after backoff.
+func (s *Server) streamTSWindow(ctx context.Context, st *f1net.Stream, sent map[string]bool, w io.Writer) error {
 	up, err := s.upstream.Fetch(ctx, st.Headers, st.PlaylistURL, "")
 	if err != nil {
 		return err
@@ -156,17 +178,21 @@ func (s *Server) streamTSWindow(ctx context.Context, st *f1net.Stream, sent map[
 	if !ok {
 		return fmt.Errorf("not a media playlist")
 	}
-	finished := false
-	for i := uint(0); i < mp.Count(); i++ {
+	count := mp.Count()
+	if count == 0 {
+		return nil
+	}
+	shipped := 0
+	for i := uint(0); i < count; i++ {
 		seg := mp.Segments[i]
 		if sent[seg.URI] {
-			finished = true
 			continue
 		}
 		segURL := hlsproxy.ResolveUpstream(st.PlaylistURL, seg.URI)
 		segUp, err := s.upstream.Fetch(ctx, st.Headers, segURL, "")
 		if err != nil {
-			return err
+			s.log.Warn("ts segment", "error", err)
+			continue
 		}
 		_, copyErr := io.Copy(w, segUp.Body)
 		segUp.Body.Close()
@@ -174,12 +200,10 @@ func (s *Server) streamTSWindow(ctx context.Context, st *f1net.Stream, sent map[
 			return copyErr
 		}
 		sent[seg.URI] = true
-		if flusher != nil {
-			flusher.Flush()
-		}
+		shipped++
 	}
-	if finished {
-		return nil
+	if shipped == 0 {
+		return fmt.Errorf("no live segments fetched")
 	}
 	return nil
 }

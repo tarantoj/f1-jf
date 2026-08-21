@@ -45,7 +45,7 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.Group != "Sports" {
 		t.Errorf("Group = %q", cfg.Group)
 	}
-	if cfg.ResolutionTTL != 30*time.Second {
+	if cfg.ResolutionTTL != 5*time.Minute {
 		t.Errorf("ResolutionTTL = %v", cfg.ResolutionTTL)
 	}
 	if cfg.VerifyPlaylist {
