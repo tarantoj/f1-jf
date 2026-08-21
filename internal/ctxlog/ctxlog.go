@@ -22,3 +22,11 @@ func From(ctx context.Context) *slog.Logger {
 	lg, _ := ctx.Value(key{}).(*slog.Logger)
 	return lg
 }
+
+// FromOr returns the logger stored in ctx by With, or fb if none is present.
+func FromOr(ctx context.Context, fb *slog.Logger) *slog.Logger {
+	if lg := From(ctx); lg != nil {
+		return lg
+	}
+	return fb
+}

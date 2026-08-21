@@ -2,11 +2,12 @@ package epg
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/url"
 	"time"
+
+	"f1-jf/internal/httpx"
 )
 
 // Session is a single F1 session from the OpenF1 API.
@@ -34,7 +35,7 @@ type Meeting struct {
 // fetchSessions fetches every session of a year.
 func fetchSessions(ctx context.Context, c *http.Client, baseURL string, year int, ua string) ([]Session, error) {
 	var out []Session
-	if err := getJSON(ctx, c, baseURL+"/sessions?year="+url.QueryEscape(fmt.Sprintf("%d", year)), ua, &out); err != nil {
+	if err := httpx.GetJSON(ctx, c, baseURL+"/sessions?year="+url.QueryEscape(fmt.Sprintf("%d", year)), ua, &out); err != nil {
 		return nil, fmt.Errorf("sessions: %w", err)
 	}
 	return out, nil
@@ -43,29 +44,10 @@ func fetchSessions(ctx context.Context, c *http.Client, baseURL string, year int
 // fetchMeetings fetches every meeting of a year.
 func fetchMeetings(ctx context.Context, c *http.Client, baseURL string, year int, ua string) ([]Meeting, error) {
 	var out []Meeting
-	if err := getJSON(ctx, c, baseURL+"/meetings?year="+url.QueryEscape(fmt.Sprintf("%d", year)), ua, &out); err != nil {
+	if err := httpx.GetJSON(ctx, c, baseURL+"/meetings?year="+url.QueryEscape(fmt.Sprintf("%d", year)), ua, &out); err != nil {
 		return nil, fmt.Errorf("meetings: %w", err)
 	}
 	return out, nil
-}
-
-// getJSON fetches and decodes a JSON endpoint with a browser-like UA.
-func getJSON(ctx context.Context, c *http.Client, endpoint, ua string, dst any) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
-	if err != nil {
-		return err
-	}
-	req.Header.Set("User-Agent", ua)
-
-	resp, err := c.Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("%s: unexpected status %s", endpoint, resp.Status)
-	}
-	return json.NewDecoder(resp.Body).Decode(dst)
 }
 
 // parseRFC3339 parses an ISO-8601 timestamp from the API.

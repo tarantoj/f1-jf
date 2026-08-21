@@ -79,8 +79,5 @@ func (s *Server) Handler() http.Handler {
 // logger returns the request-scoped logger from ctx (carrying a request_id)
 // when present, otherwise the server's own logger.
 func (s *Server) logger(ctx context.Context) *slog.Logger {
-	if lg := ctxlog.From(ctx); lg != nil {
-		return lg
-	}
-	return s.log
+	return ctxlog.FromOr(ctx, s.log)
 }

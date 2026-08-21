@@ -108,10 +108,7 @@ func NewFallbackResolver(inner StreamResolver, lister SourceLister, ttl time.Dur
 // log returns the request-scoped logger from ctx (carrying a request_id) when
 // present, otherwise the resolver's own logger.
 func (f *fallbackResolver) log(ctx context.Context) *slog.Logger {
-	if lg := ctxlog.From(ctx); lg != nil {
-		return lg
-	}
-	return f.logger
+	return ctxlog.FromOr(ctx, f.logger)
 }
 
 // sources returns the dashboard source list, cached while fresh. On a refetch
@@ -210,10 +207,7 @@ func NewRegistryLogger(resolver Resolver, ttl time.Duration, logger *slog.Logger
 // log returns the request-scoped logger from ctx (carrying a request_id) when
 // present, otherwise the registry's own logger.
 func (r *Registry) log(ctx context.Context) *slog.Logger {
-	if lg := ctxlog.From(ctx); lg != nil {
-		return lg
-	}
-	return r.logger
+	return ctxlog.FromOr(ctx, r.logger)
 }
 
 // Resolve returns the channel's stream, re-resolving once the cached entry

@@ -15,14 +15,10 @@ import (
 	"time"
 
 	"f1-jf/internal/ctxlog"
+	"f1-jf/internal/httpx"
 )
 
-const (
-	defaultBaseURL = "https://f1net.vercel.app"
-	// defaultUA mimics a real Chrome browser so upstream servers treat the
-	// requests as coming from a user rather than an API client.
-	defaultUA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
-)
+const defaultBaseURL = "https://f1net.vercel.app"
 
 // Errors returned by the package.
 var (
@@ -54,15 +50,12 @@ type Client struct {
 }
 
 // log returns the request-scoped logger from ctx (carrying a request_id) when
-// present, otherwise the client's own logger.
+// present, otherwise the client's own logger (or slog.Default if unset).
 func (c *Client) log(ctx context.Context) *slog.Logger {
-	if lg := ctxlog.From(ctx); lg != nil {
-		return lg
+	if c.Logger == nil {
+		return slog.Default()
 	}
-	if c.Logger != nil {
-		return c.Logger
-	}
-	return slog.Default()
+	return ctxlog.FromOr(ctx, c.Logger)
 }
 
 func (c *Client) http() *http.Client {
@@ -83,7 +76,7 @@ func (c *Client) userAgent() string {
 	if c.UserAgent != "" {
 		return c.UserAgent
 	}
-	return defaultUA
+	return httpx.DefaultUA
 }
 
 // Source is a single entry from the dashboard source list.

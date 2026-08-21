@@ -5,7 +5,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"path"
@@ -13,6 +12,8 @@ import (
 	"time"
 
 	"golang.org/x/net/html"
+
+	"f1-jf/internal/httpx"
 )
 
 // streamfreeResolver resolves https://streamfree.top/embed/{...}/{key}
@@ -87,7 +88,7 @@ func (streamfreeResolver) resolve(ctx context.Context, c *Client, src Source, u 
 		return nil, fmt.Errorf("%w: %s", ErrStreamOffline, err)
 	}
 
-	tokens, err := fetchTokens(ctx, c, c.http(), c.userAgent(), src.URL)
+	tokens, err := fetchTokens(ctx, c, src.URL)
 	if err != nil {
 		c.log(ctx).Warn("token extraction failed", "source", src.Name, "error", err)
 		return nil, fmt.Errorf("%w: extract tokens: %v", ErrStreamOffline, err)
@@ -178,7 +179,7 @@ func playbackHeaders(c *Client, referer, origin string) http.Header {
 
 func fetchStreamKey(ctx context.Context, c *Client, origin, key string) (*streamKeyResponse, error) {
 	var out streamKeyResponse
-	if err := getJSON(ctx, c, origin+"/get-stream-key/"+url.PathEscape(key), &out); err != nil {
+	if err := httpx.GetJSON(ctx, c.http(), origin+"/get-stream-key/"+url.PathEscape(key), c.userAgent(), &out); err != nil {
 		return nil, fmt.Errorf("get-stream-key: %w", err)
 	}
 	return &out, nil
@@ -186,7 +187,7 @@ func fetchStreamKey(ctx context.Context, c *Client, origin, key string) (*stream
 
 func fetchStreamStatus(ctx context.Context, c *Client, origin, key string) (*streamStatus, error) {
 	var out streamStatus
-	if err := getJSON(ctx, c, origin+"/api/stream-status/"+url.PathEscape(key), &out); err != nil {
+	if err := httpx.GetJSON(ctx, c.http(), origin+"/api/stream-status/"+url.PathEscape(key), c.userAgent(), &out); err != nil {
 		return nil, fmt.Errorf("stream-status: %w", err)
 	}
 	return &out, nil
@@ -196,19 +197,8 @@ func fetchStreamStatus(ctx context.Context, c *Client, origin, key string) (*str
 // blocks. It returns an error if the page cannot be fetched or does not
 // contain the map (e.g. page changed); callers must not fall back to
 // hardcoded tokens, which silently rot and get rejected upstream.
-func fetchTokens(ctx context.Context, c *Client, hc *http.Client, ua, embedURL string) (map[string]qualityToken, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, embedURL, nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("User-Agent", ua)
-
-	resp, err := hc.Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+func fetchTokens(ctx context.Context, c *Client, embedURL string) (map[string]qualityToken, error) {
+	body, err := httpx.Get(ctx, c.http(), embedURL, c.userAgent(), 1<<20)
 	if err != nil {
 		return nil, err
 	}
@@ -244,23 +234,4 @@ func scriptBodies(body []byte) [][]byte {
 			}
 		}
 	}
-}
-
-// getJSON fetches and decodes a JSON endpoint using the client's UA.
-func getJSON(ctx context.Context, c *Client, endpoint string, dst any) error {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint, nil)
-	if err != nil {
-		return err
-	}
-	req.Header.Set("User-Agent", c.userAgent())
-
-	resp, err := c.http().Do(req)
-	if err != nil {
-		return err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("%s: unexpected status %s", endpoint, resp.Status)
-	}
-	return json.NewDecoder(resp.Body).Decode(dst)
 }

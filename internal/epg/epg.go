@@ -14,11 +14,9 @@ import (
 	"time"
 
 	"f1-jf/internal/ctxlog"
+	"f1-jf/internal/httpx"
 	"f1-jf/internal/iptv"
 )
-
-// defaultUA mimics a browser so the API treats requests as coming from a user.
-const defaultUA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
 
 // Programme is a single guide entry ready for XMLTV rendering.
 type Programme struct {
@@ -99,10 +97,7 @@ func New(opts Options) *Service {
 // log returns the request-scoped logger from ctx (carrying a request_id) when
 // present, otherwise the service's own logger.
 func (s *Service) log(ctx context.Context) *slog.Logger {
-	if lg := ctxlog.From(ctx); lg != nil {
-		return lg
-	}
-	return s.logger
+	return ctxlog.FromOr(ctx, s.logger)
 }
 
 // Schedule returns the season calendar, re-fetching once the cache is older
@@ -137,11 +132,11 @@ func (s *Service) Schedule(ctx context.Context) (*Schedule, error) {
 
 // fetch downloads and joins the season's sessions and meetings.
 func (s *Service) fetch(ctx context.Context) (*Schedule, error) {
-	sessions, err := fetchSessions(ctx, s.client, s.apiURL, s.year, defaultUA)
+	sessions, err := fetchSessions(ctx, s.client, s.apiURL, s.year, httpx.DefaultUA)
 	if err != nil {
 		return nil, err
 	}
-	meetings, err := fetchMeetings(ctx, s.client, s.apiURL, s.year, defaultUA)
+	meetings, err := fetchMeetings(ctx, s.client, s.apiURL, s.year, httpx.DefaultUA)
 	if err != nil {
 		return nil, err
 	}

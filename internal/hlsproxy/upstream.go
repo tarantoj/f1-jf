@@ -47,10 +47,7 @@ func NewClientLogger(hc *http.Client, logger *slog.Logger) *Client {
 // log returns the request-scoped logger from ctx (carrying a request_id) when
 // present, otherwise the client's own logger.
 func (c *Client) log(ctx context.Context) *slog.Logger {
-	if lg := ctxlog.From(ctx); lg != nil {
-		return lg
-	}
-	return c.logger
+	return ctxlog.FromOr(ctx, c.logger)
 }
 
 // Response is a successful upstream resource: the raw body plus the metadata

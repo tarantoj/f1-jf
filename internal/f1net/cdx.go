@@ -3,12 +3,12 @@ package f1net
 import (
 	"context"
 	"fmt"
-	"io"
-	"net/http"
 	"net/url"
 	"regexp"
 	"strconv"
 	"strings"
+
+	"f1-jf/internal/httpx"
 )
 
 // cdxResolver resolves https://cdx-08192.website/embed/{channel} embeds.
@@ -60,21 +60,7 @@ func (cdxResolver) resolve(ctx context.Context, c *Client, src Source, u *url.UR
 // fetchEmbed GETs the embed page and returns its body, capped at the same
 // limit the streamfree resolver uses.
 func (c *Client) fetchEmbed(ctx context.Context, embedURL string) ([]byte, error) {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, embedURL, nil)
-	if err != nil {
-		return nil, err
-	}
-	req.Header.Set("User-Agent", c.userAgent())
-
-	resp, err := c.http().Do(req)
-	if err != nil {
-		return nil, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("%s: unexpected status %s", embedURL, resp.Status)
-	}
-	return io.ReadAll(io.LimitReader(resp.Body, 1<<20))
+	return httpx.Get(ctx, c.http(), embedURL, c.userAgent(), 1<<20)
 }
 
 // decodeCDX extracts the signed m3u8 URL from the embed page's obfuscated
