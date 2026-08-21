@@ -323,6 +323,76 @@ func TestPlaylist(t *testing.T) {
 	}
 }
 
+func TestPlaylistTvgLogoConfigured(t *testing.T) {
+	up := newUpstream(t)
+	ch := &iptv.Channel{ID: "f1", Name: "F1", Group: "Sports", Qualities: []string{"1080p"}, Logo: "https://img.example/f1.png"}
+	resolver := &fakeResolver{streams: map[string]*f1net.Stream{"1080p": streamFor(up, "1080p")}}
+	reg := iptv.NewRegistry(resolver, 0, nil)
+	srv := New(reg, ch, Options{Upstream: hlsproxy.NewClient(up.Client(), nil)})
+	ts := httptest.NewServer(srv.Handler())
+	t.Cleanup(ts.Close)
+	t.Cleanup(up.Close)
+
+	resp, err := http.Get(ts.URL + "/iptv/playlist.m3u")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	want := `tvg-id="f1" tvg-name="F1" tvg-logo="https://img.example/f1.png" group-title="Sports",F1`
+	if !strings.Contains(string(body), want) {
+		t.Errorf("playlist missing configured tvg-logo:\n%s", body)
+	}
+}
+
+func TestPlaylistTvgLogoDynamic(t *testing.T) {
+	up := newUpstream(t)
+	ch := &iptv.Channel{ID: "f1", Name: "F1", Group: "Sports", Qualities: []string{"1080p"}}
+	resolver := &fakeResolver{streams: map[string]*f1net.Stream{"1080p": streamFor(up, "1080p")}}
+	reg := iptv.NewRegistry(resolver, 0, nil)
+	srv := New(reg, ch, Options{
+		Upstream:    hlsproxy.NewClient(up.Client(), nil),
+		ChannelLogo: func(context.Context) string { return "https://img.example/circuit.png" },
+	})
+	ts := httptest.NewServer(srv.Handler())
+	t.Cleanup(ts.Close)
+	t.Cleanup(up.Close)
+
+	resp, err := http.Get(ts.URL + "/iptv/playlist.m3u")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if !strings.Contains(string(body), `tvg-logo="https://img.example/circuit.png"`) {
+		t.Errorf("playlist missing dynamic tvg-logo:\n%s", body)
+	}
+}
+
+func TestPlaylistTvgLogoConfiguredWins(t *testing.T) {
+	up := newUpstream(t)
+	ch := &iptv.Channel{ID: "f1", Name: "F1", Group: "Sports", Qualities: []string{"1080p"}, Logo: "https://img.example/f1.png"}
+	resolver := &fakeResolver{streams: map[string]*f1net.Stream{"1080p": streamFor(up, "1080p")}}
+	reg := iptv.NewRegistry(resolver, 0, nil)
+	srv := New(reg, ch, Options{
+		Upstream:    hlsproxy.NewClient(up.Client(), nil),
+		ChannelLogo: func(context.Context) string { return "https://img.example/dynamic.png" },
+	})
+	ts := httptest.NewServer(srv.Handler())
+	t.Cleanup(ts.Close)
+	t.Cleanup(up.Close)
+
+	resp, err := http.Get(ts.URL + "/iptv/playlist.m3u")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+	if strings.Contains(string(body), "dynamic.png") || !strings.Contains(string(body), `tvg-logo="https://img.example/f1.png"`) {
+		t.Errorf("configured logo must win over dynamic:\n%s", body)
+	}
+}
+
 func TestPlaylistOmitsOffline(t *testing.T) {
 	ts, _ := newServer(t, nil, map[string]error{"1080p": errors.New("offline"), "720p": errors.New("offline")})
 

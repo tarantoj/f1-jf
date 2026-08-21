@@ -55,6 +55,7 @@ func run() error {
 	if err != nil {
 		return err
 	}
+	ch.Logo = cfg.ChannelLogo
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
@@ -76,11 +77,15 @@ func run() error {
 		prewarmEPG(ctx, epgSvc, logger)
 	}
 
-	server := httpserver.New(registry, ch, httpserver.Options{
+	serverOpts := httpserver.Options{
 		Base:   cfg.BaseURL,
 		Logger: logger,
 		EPG:    epgSvc,
-	})
+	}
+	if epgSvc != nil {
+		serverOpts.ChannelLogo = epgSvc.ChannelIcon
+	}
+	server := httpserver.New(registry, ch, serverOpts)
 
 	addr := cfg.Addr()
 	httpServer := &http.Server{

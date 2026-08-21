@@ -18,6 +18,7 @@ type Config struct {
 	DashboardURL   string        // F1IPTV_DASHBOARD_URL (dashboard the source list is fetched from)
 	BaseURL        string        // F1IPTV_BASE_URL (empty = derive from request Host)
 	Group          string        // F1IPTV_GROUP (IPTV group-title)
+	ChannelLogo    string        // F1IPTV_CHANNEL_LOGO (channel logo; empty = derive from EPG circuit image)
 	ResolutionTTL  time.Duration // F1IPTV_TTL (how long to cache a resolved stream)
 	VerifyPlaylist bool          // F1IPTV_VERIFY_PLAYLIST
 	LogLevel       string        // F1IPTV_LOG_LEVEL (debug/info/warn/error)
@@ -67,6 +68,7 @@ func Load() (*Config, error) {
 		DashboardURL:   str("F1IPTV_DASHBOARD_URL", "https://f1net.vercel.app"),
 		BaseURL:        str("F1IPTV_BASE_URL", ""),
 		Group:          str("F1IPTV_GROUP", "Sports"),
+		ChannelLogo:    str("F1IPTV_CHANNEL_LOGO", ""),
 		ResolutionTTL:  ttl,
 		VerifyPlaylist: verify,
 		LogLevel:       str("F1IPTV_LOG_LEVEL", "info"),

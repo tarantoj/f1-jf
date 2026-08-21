@@ -24,6 +24,7 @@ type Programme struct {
 	Stop  time.Time
 	Title string
 	Desc  string
+	Image string // circuit image URL of the meeting
 }
 
 // Schedule is a cached season schedule.
@@ -148,9 +149,9 @@ func (s *Service) fetch(ctx context.Context) (*Schedule, error) {
 // name ("Pre-Season Testing") rather than session type, since the API labels
 // them as "Practice".
 func buildSchedule(sessions []Session, meetings []Meeting, year int) (*Schedule, error) {
-	names := make(map[int]string, len(meetings))
+	byKey := make(map[int]Meeting, len(meetings))
 	for _, m := range meetings {
-		names[m.MeetingKey] = m.MeetingName
+		byKey[m.MeetingKey] = m
 	}
 
 	var progs []Programme
@@ -158,7 +159,8 @@ func buildSchedule(sessions []Session, meetings []Meeting, year int) (*Schedule,
 		if sn.IsCancelled {
 			continue
 		}
-		meeting := names[sn.MeetingKey]
+		m := byKey[sn.MeetingKey]
+		meeting := m.MeetingName
 		if meeting == "" {
 			meeting = sn.CircuitShort
 		}
@@ -178,9 +180,34 @@ func buildSchedule(sessions []Session, meetings []Meeting, year int) (*Schedule,
 			Stop:  stop,
 			Title: fmt.Sprintf("%d %s — %s", year, meeting, sn.SessionName),
 			Desc:  fmt.Sprintf("%d F1 %s — %s at %s (%s)", year, meeting, sn.SessionName, sn.CircuitShort, sn.CountryName),
+			Image: m.CircuitImage,
 		})
 	}
 	return &Schedule{Year: year, Programmes: progs}, nil
+}
+
+// upcoming returns the programmes that have not ended yet at now.
+func upcoming(programmes []Programme, now time.Time) []Programme {
+	var out []Programme
+	for _, p := range programmes {
+		if p.Stop.After(now) {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// ChannelIcon returns the circuit image of the next upcoming programme, used
+// as the channel logo (e.g. the playlist's tvg-logo). It reuses the cached
+// schedule, so it falls back to the last-good calendar during fetch failures.
+// It returns "" when there is no schedule or no upcoming programme carries an
+// image.
+func (s *Service) ChannelIcon(ctx context.Context) string {
+	sched, err := s.Schedule(ctx)
+	if err != nil {
+		return ""
+	}
+	return nextImage(upcoming(sched.Programmes, s.now()))
 }
 
 // RenderXML returns the XMLTV document for the given channel.
@@ -189,13 +216,5 @@ func (s *Service) RenderXML(ctx context.Context, ch *iptv.Channel) ([]byte, erro
 	if err != nil {
 		return nil, err
 	}
-
-	progs := make([]Programme, 0, len(sched.Programmes))
-	for _, p := range sched.Programmes {
-		if !p.Stop.After(s.now()) {
-			continue
-		}
-		progs = append(progs, p)
-	}
-	return xmltvDoc(ch, progs), nil
+	return xmltvDoc(ch, upcoming(sched.Programmes, s.now())), nil
 }

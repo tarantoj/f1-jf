@@ -57,6 +57,13 @@ in
       description = "IPTV group-title for the channels (F1IPTV_GROUP).";
     };
 
+    channelLogo = lib.mkOption {
+      type = lib.types.str;
+      default = "";
+      example = "https://example.com/f1.png";
+      description = "Channel logo URL for tvg-logo and the XMLTV icon (F1IPTV_CHANNEL_LOGO); empty derives the icon from the EPG's next meeting.";
+    };
+
     ttl = lib.mkOption {
       type = lib.types.str;
       default = "30s";
@@ -141,6 +148,7 @@ in
         F1IPTV_DASHBOARD_URL = cfg.dashboardURL;
         F1IPTV_BASE_URL = cfg.baseURL;
         F1IPTV_GROUP = cfg.group;
+        F1IPTV_CHANNEL_LOGO = cfg.channelLogo;
         F1IPTV_TTL = cfg.ttl;
         F1IPTV_VERIFY_PLAYLIST = if cfg.verifyPlaylist then "true" else "false";
         F1IPTV_LOG_LEVEL = cfg.logLevel;

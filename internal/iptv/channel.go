@@ -42,6 +42,7 @@ type Channel struct {
 	ID        string
 	Name      string
 	Group     string
+	Logo      string // channel logo URL for tvg-logo / XMLTV icon (may be empty)
 	Qualities []string
 }
 

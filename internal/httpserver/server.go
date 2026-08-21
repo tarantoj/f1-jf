@@ -28,6 +28,10 @@ type Options struct {
 	Upstream *hlsproxy.Client
 	// EPG renders the XMLTV guide; when nil, /iptv/guide.xml is disabled.
 	EPG EPGRenderer
+	// ChannelLogo returns the channel's current logo (e.g. the next
+	// meeting's circuit image) for the M3U playlist. It is consulted when the
+	// channel has no configured Logo. May be nil.
+	ChannelLogo func(ctx context.Context) string
 }
 
 // EPGRenderer renders an XMLTV document for the given channel.
@@ -43,6 +47,7 @@ type Server struct {
 	log      *slog.Logger
 	upstream *hlsproxy.Client
 	epg      EPGRenderer
+	epgLogo  func(ctx context.Context) string
 }
 
 func New(registry *iptv.Registry, ch *iptv.Channel, opts Options) *Server {
@@ -53,6 +58,7 @@ func New(registry *iptv.Registry, ch *iptv.Channel, opts Options) *Server {
 		log:      opts.Logger,
 		upstream: opts.Upstream,
 		epg:      opts.EPG,
+		epgLogo:  opts.ChannelLogo,
 	}
 	if s.log == nil {
 		s.log = slog.Default()
@@ -81,4 +87,16 @@ func (s *Server) Handler() http.Handler {
 // when present, otherwise the server's own logger.
 func (s *Server) logger(ctx context.Context) *slog.Logger {
 	return ctxlog.FromOr(ctx, s.log)
+}
+
+// channelLogo resolves the channel logo for the playlist: a configured
+// channel.Logo wins, otherwise the EPG-provided next-upcoming meeting image.
+func (s *Server) channelLogo(ctx context.Context) string {
+	if s.ch.Logo != "" {
+		return s.ch.Logo
+	}
+	if s.epgLogo != nil {
+		return s.epgLogo(ctx)
+	}
+	return ""
 }

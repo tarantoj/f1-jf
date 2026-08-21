@@ -29,6 +29,8 @@ type Meeting struct {
 	MeetingName  string `json:"meeting_name"`
 	CircuitShort string `json:"circuit_short_name"`
 	CountryName  string `json:"country_name"`
+	CircuitImage string `json:"circuit_image"`
+	CountryFlag  string `json:"country_flag"`
 }
 
 // fetchSessions fetches every session of a year.

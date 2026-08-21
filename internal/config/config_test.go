@@ -12,6 +12,7 @@ func TestLoadDefaults(t *testing.T) {
 	t.Setenv("F1IPTV_DASHBOARD_URL", "")
 	t.Setenv("F1IPTV_BASE_URL", "")
 	t.Setenv("F1IPTV_GROUP", "")
+	t.Setenv("F1IPTV_CHANNEL_LOGO", "")
 	t.Setenv("F1IPTV_TTL", "")
 	t.Setenv("F1IPTV_VERIFY_PLAYLIST", "")
 	t.Setenv("F1IPTV_LOG_LEVEL", "")
@@ -45,6 +46,9 @@ func TestLoadDefaults(t *testing.T) {
 	if cfg.Group != "Sports" {
 		t.Errorf("Group = %q", cfg.Group)
 	}
+	if cfg.ChannelLogo != "" {
+		t.Errorf("ChannelLogo = %q, want empty", cfg.ChannelLogo)
+	}
 	if cfg.ResolutionTTL != 5*time.Minute {
 		t.Errorf("ResolutionTTL = %v", cfg.ResolutionTTL)
 	}
@@ -75,6 +79,7 @@ func TestLoadOverrides(t *testing.T) {
 	t.Setenv("F1IPTV_DASHBOARD_URL", "https://example.com")
 	t.Setenv("F1IPTV_BASE_URL", "https://f1.example.com")
 	t.Setenv("F1IPTV_GROUP", "Racing")
+	t.Setenv("F1IPTV_CHANNEL_LOGO", "https://img.example/f1.png")
 	t.Setenv("F1IPTV_TTL", "5s")
 	t.Setenv("F1IPTV_VERIFY_PLAYLIST", "true")
 	t.Setenv("F1IPTV_LOG_LEVEL", "debug")
@@ -91,6 +96,7 @@ func TestLoadOverrides(t *testing.T) {
 		cfg.DashboardURL != "https://example.com" ||
 		cfg.BaseURL != "https://f1.example.com" ||
 		cfg.Group != "Racing" ||
+		cfg.ChannelLogo != "https://img.example/f1.png" ||
 		cfg.ResolutionTTL != 5*time.Second ||
 		!cfg.VerifyPlaylist || cfg.LogLevel != "debug" {
 		t.Errorf("unexpected config: %+v", cfg)

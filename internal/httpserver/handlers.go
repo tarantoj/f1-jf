@@ -54,8 +54,13 @@ func (s *Server) handlePlaylist(w http.ResponseWriter, r *http.Request) {
 	if err != nil || st == nil {
 		s.logger(r.Context()).Warn("channel offline", "channel", s.ch.ID, "error", err)
 	} else {
-		fmt.Fprintf(&b, `#EXTINF:-1 tvg-id=%q tvg-name=%q group-title=%q,%s`+"\n",
+		line := fmt.Sprintf(`#EXTINF:-1 tvg-id=%q tvg-name=%q group-title=%q,%s`+"\n",
 			s.ch.ID, s.ch.Name, s.ch.Group, s.ch.Name)
+		if logo := s.channelLogo(r.Context()); logo != "" {
+			line = fmt.Sprintf(`#EXTINF:-1 tvg-id=%q tvg-name=%q tvg-logo=%q group-title=%q,%s`+"\n",
+				s.ch.ID, s.ch.Name, logo, s.ch.Group, s.ch.Name)
+		}
+		fmt.Fprint(&b, line)
 		fmt.Fprintf(&b, "%s/iptv/stream/raw.ts\n", s.publicBase(r))
 	}
 

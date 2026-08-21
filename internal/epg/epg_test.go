@@ -41,9 +41,9 @@ func testAPI(t *testing.T) (*httptest.Server, func() int) {
 	})
 	mux.HandleFunc("/meetings", func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprint(w, `[
-			{"meeting_key":100,"meeting_name":"Bahrain Grand Prix & Festival","circuit_short_name":"Bahrain Int","country_name":"Bahrain"},
-			{"meeting_key":200,"meeting_name":"Somewhere Sprint Weekend","circuit_short_name":"Some Circuit","country_name":"Somewhere"},
-			{"meeting_key":300,"meeting_name":"Pre-Season Testing","circuit_short_name":"Sakhir","country_name":"Bahrain"}
+			{"meeting_key":100,"meeting_name":"Bahrain Grand Prix & Festival","circuit_short_name":"Bahrain Int","country_name":"Bahrain","circuit_image":"https://img.example/circuit-bahrain.png","country_flag":"https://img.example/flag-bahrain.png"},
+			{"meeting_key":200,"meeting_name":"Somewhere Sprint Weekend","circuit_short_name":"Some Circuit","country_name":"Somewhere","circuit_image":"https://img.example/circuit-somewhere.png"},
+			{"meeting_key":300,"meeting_name":"Pre-Season Testing","circuit_short_name":"Sakhir","country_name":"Bahrain","circuit_image":"https://img.example/circuit-testing.png"}
 		]`)
 	})
 
@@ -98,6 +98,10 @@ func TestRenderXML(t *testing.T) {
 	// Cancelled and testing sessions must be excluded.
 	if strings.Contains(text, "Sprint") || strings.Contains(text, "Day 1") || strings.Contains(text, "Pre-Season Testing") {
 		t.Errorf("cancelled/testing sessions included:\n%s", text)
+	}
+	// Programme and channel icons come from the meeting's circuit image.
+	if got := strings.Count(text, `<icon src="https://img.example/circuit-bahrain.png">`); got != 4 {
+		t.Errorf("circuit icon count = %d, want 4 (3 programmes + 1 channel):\n%s", got, text)
 	}
 }
 
@@ -188,5 +192,46 @@ func TestScheduleLastGoodFallback(t *testing.T) {
 	}
 	if len(got.Programmes) != 3 {
 		t.Errorf("fallback programmes = %d, want 3", len(got.Programmes))
+	}
+}
+
+func TestChannelIcon(t *testing.T) {
+	srv, _ := testAPI(t)
+	svc := New(Options{APIURL: srv.URL, Year: 2026, TTL: time.Hour, HTTPClient: srv.Client(), Now: seasonStart})
+
+	if got := svc.ChannelIcon(context.Background()); got != "https://img.example/circuit-bahrain.png" {
+		t.Errorf("ChannelIcon = %q", got)
+	}
+}
+
+func TestChannelIconNoUpcoming(t *testing.T) {
+	srv, _ := testAPI(t)
+	// "Now" is after every session of the season.
+	svc := New(Options{
+		APIURL: srv.URL, Year: 2026, TTL: time.Hour, HTTPClient: srv.Client(),
+		Now: func() time.Time { return time.Date(2027, 1, 1, 0, 0, 0, 0, time.UTC) },
+	})
+
+	if got := svc.ChannelIcon(context.Background()); got != "" {
+		t.Errorf("ChannelIcon = %q, want empty after season end", got)
+	}
+}
+
+func TestRenderXMLLogoOverride(t *testing.T) {
+	srv, _ := testAPI(t)
+	svc := New(Options{APIURL: srv.URL, Year: 2026, TTL: time.Hour, HTTPClient: srv.Client(), Now: seasonStart})
+
+	ch := &iptv.Channel{ID: "f1", Name: "F1", Logo: "https://img.example/f1-logo.png"}
+	xml, err := svc.RenderXML(context.Background(), ch)
+	if err != nil {
+		t.Fatalf("RenderXML: %v", err)
+	}
+	text := string(xml)
+	if !strings.Contains(text, `<icon src="https://img.example/f1-logo.png">`) {
+		t.Errorf("configured channel logo not used:\n%s", text)
+	}
+	// Programme icons still come from the meeting, not the channel logo.
+	if !strings.Contains(text, `https://img.example/circuit-bahrain.png`) {
+		t.Errorf("programme circuit icons missing:\n%s", text)
 	}
 }
