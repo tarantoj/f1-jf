@@ -72,6 +72,39 @@ func TestRewritePlaylistExtensionAllowed(t *testing.T) {
 	}
 }
 
+func TestResolveUpstream(t *testing.T) {
+	const playlist = "https://streamfree.top/live-cdn/skyf11080p/index.m3u8"
+
+	cases := []struct {
+		name string
+		raw  string
+		want string
+	}{
+		{
+			name: "relative",
+			raw:  "18261.js",
+			want: "https://streamfree.top/live-cdn/skyf11080p/18261.js",
+		},
+		{
+			name: "root-relative",
+			raw:  "/live/skyf11080p/18261.js",
+			want: "https://streamfree.top/live/skyf11080p/18261.js",
+		},
+		{
+			name: "absolute cdn url",
+			raw:  "https://cdn1.streamfree.top/live/skyf11080p/18261.js",
+			want: "https://cdn1.streamfree.top/live/skyf11080p/18261.js",
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := ResolveUpstream(playlist, c.raw); got != c.want {
+				t.Errorf("ResolveUpstream(%q, %q) = %q, want %q", playlist, c.raw, got, c.want)
+			}
+		})
+	}
+}
+
 func TestRewritePlaylistNonPlaylist(t *testing.T) {
 	in := []byte("not a playlist at all, just data")
 	got := RewritePlaylist(in, "https://streamfree.top/live/x/index.m3u8", "http://h:8080", "c1")

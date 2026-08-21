@@ -73,9 +73,14 @@ func rewriteURI(upstreamBase, pubBase, channel, raw string) string {
 }
 
 // resolveUpstream resolves a possibly-relative URI against a playlist URL.
-// HLS segments resolve against the playlist's directory, not the playlist
-// file itself, and never inherit the playlist's query tokens.
+// Absolute (scheme-qualified) URIs are returned unchanged; host-relative
+// URIs resolve against the playlist host; other relative URIs resolve against
+// the playlist's directory (not the playlist file itself) and never inherit
+// the playlist's query tokens.
 func resolveUpstream(playlistURL, raw string) string {
+	if strings.HasPrefix(raw, "http://") || strings.HasPrefix(raw, "https://") {
+		return raw
+	}
 	u, err := url.Parse(playlistURL)
 	if err != nil {
 		return strings.TrimSuffix(playlistURL, "/") + "/" + raw
