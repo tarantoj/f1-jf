@@ -1,6 +1,7 @@
 package httpserver
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
@@ -11,6 +12,7 @@ import (
 	"net/url"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -180,6 +182,12 @@ func newServer(t *testing.T, build func(up *httptest.Server) map[string]*f1net.S
 // newServerWith is newServer but with control over the mock upstream's
 // segment behaviour (see upstreamOpts).
 func newServerWith(t *testing.T, build func(up *httptest.Server) map[string]*f1net.Stream, errs map[string]error, uo upstreamOpts, epg ...EPGRenderer) (*httptest.Server, *httptest.Server) {
+	return newServerWithLogger(t, slog.New(slog.NewTextHandler(io.Discard, nil)), build, errs, uo, epg...)
+}
+
+// newServerWithLogger is newServerWith but with an explicit application logger
+// so tests can capture emitted log lines.
+func newServerWithLogger(t *testing.T, logger *slog.Logger, build func(up *httptest.Server) map[string]*f1net.Stream, errs map[string]error, uo upstreamOpts, epg ...EPGRenderer) (*httptest.Server, *httptest.Server) {
 	t.Helper()
 	up := newUpstream(t, uo)
 	var streams map[string]*f1net.Stream
@@ -191,7 +199,6 @@ func newServerWith(t *testing.T, build func(up *httptest.Server) map[string]*f1n
 		{ID: "f1-1080p", Name: "F1 1080p", Group: "Sports", Quality: "1080p"},
 		{ID: "f1-720p", Name: "F1 720p", Group: "Sports", Quality: "720p"},
 	}
-	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 	opts := Options{Logger: logger, Upstream: hlsproxy.NewClient(up.Client())}
 	if len(epg) > 0 {
 		opts.EPG = epg[0]
@@ -566,5 +573,91 @@ func TestRawTSUnknownChannel(t *testing.T) {
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("status = %d, want 404", resp.StatusCode)
+	}
+}
+
+// bufferSink is a thread-safe log sink used to capture structured output.
+type bufferSink struct {
+	mu sync.Mutex
+	b  bytes.Buffer
+}
+
+func (s *bufferSink) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.Write(p)
+}
+
+func (s *bufferSink) String() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.String()
+}
+
+// TestRequestIDHonorsInboundHeader verifies that an inbound X-Request-ID is
+// honored and attached to the request's structured log output.
+func TestRequestIDHonorsInboundHeader(t *testing.T) {
+	sink := &bufferSink{}
+	logger := slog.New(slog.NewTextHandler(sink, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	ts, _ := newServerWithLogger(t, logger, nil, nil, upstreamOpts{})
+
+	req, _ := http.NewRequest(http.MethodGet, ts.URL+"/healthz", nil)
+	req.Header.Set("X-Request-ID", "test-request-123")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	io.Copy(io.Discard, resp.Body)
+
+	// The request logger line may be written after the response completes;
+	// poll briefly for it.
+	deadline := time.Now().Add(2 * time.Second)
+	for !strings.Contains(sink.String(), "request_id=test-request-123") && time.Now().Before(deadline) {
+		time.Sleep(10 * time.Millisecond)
+	}
+	if !strings.Contains(sink.String(), "request_id=test-request-123") {
+		t.Errorf("log output missing correlated request_id:\n%s", sink.String())
+	}
+}
+
+// TestStreamStartEndLogged verifies the raw TS streaming route emits structured
+// stream started/ended log lines (since the request middleware cannot log an
+// indefinite stream on completion).
+func TestStreamStartEndLogged(t *testing.T) {
+	sink := &bufferSink{}
+	logger := slog.New(slog.NewTextHandler(sink, &slog.HandlerOptions{Level: slog.LevelDebug}))
+	ts, up := newServerWithLogger(t, logger, func(up *httptest.Server) map[string]*f1net.Stream {
+		return map[string]*f1net.Stream{"1080p": streamFor(up, "1080p")}
+	}, nil, upstreamOpts{slowSegments: true})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, ts.URL+"/iptv/stream/f1-1080p.ts", nil)
+	resp, err := up.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Read a little then abort so the stream ends.
+	buf := make([]byte, 64)
+	if _, err := resp.Body.Read(buf); err != nil {
+		t.Fatal(err)
+	}
+	resp.Body.Close()
+	cancel()
+
+	deadline := time.Now().Add(3 * time.Second)
+	for !strings.Contains(sink.String(), "stream ended") && time.Now().Before(deadline) {
+		time.Sleep(20 * time.Millisecond)
+	}
+	out := sink.String()
+	if !strings.Contains(out, "level=INFO") || !strings.Contains(out, "stream started") {
+		t.Errorf("missing stream started log:\n%s", out)
+	}
+	if !strings.Contains(out, "stream ended") {
+		t.Errorf("missing stream ended log:\n%s", out)
+	}
+	if !strings.Contains(out, "channel=f1-1080p") {
+		t.Errorf("stream logs missing channel:\n%s", out)
 	}
 }

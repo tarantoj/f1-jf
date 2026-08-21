@@ -6,12 +6,14 @@ package iptv
 import (
 	"context"
 	"fmt"
+	"log/slog"
 	"strings"
 	"sync"
 	"time"
 
 	"golang.org/x/sync/singleflight"
 
+	"f1-jf/internal/ctxlog"
 	f1net "f1-jf/internal/f1net"
 )
 
@@ -77,6 +79,7 @@ type Registry struct {
 	mu       sync.RWMutex
 	cache    map[string]cachedStream
 	group    singleflight.Group
+	logger   *slog.Logger
 }
 
 type cachedStream struct {
@@ -86,14 +89,33 @@ type cachedStream struct {
 }
 
 func NewRegistry(resolver Resolver, ttl time.Duration) *Registry {
+	return NewRegistryLogger(resolver, ttl, nil)
+}
+
+// NewRegistryLogger is NewRegistry with an explicit logger (defaults to
+// slog.Default()).
+func NewRegistryLogger(resolver Resolver, ttl time.Duration, logger *slog.Logger) *Registry {
 	if ttl <= 0 {
 		ttl = 30 * time.Second
+	}
+	if logger == nil {
+		logger = slog.Default()
 	}
 	return &Registry{
 		resolver: resolver,
 		ttl:      ttl,
 		cache:    make(map[string]cachedStream),
+		logger:   logger,
 	}
+}
+
+// log returns the request-scoped logger from ctx (carrying a request_id) when
+// present, otherwise the registry's own logger.
+func (r *Registry) log(ctx context.Context) *slog.Logger {
+	if lg := ctxlog.From(ctx); lg != nil {
+		return lg
+	}
+	return r.logger
 }
 
 // Resolve returns the channel's stream, re-resolving once the cached entry
@@ -101,14 +123,17 @@ func NewRegistry(resolver Resolver, ttl time.Duration) *Registry {
 // returned as a fallback; if there is none, the error is returned. Concurrent
 // resolves of the same channel are coalesced into a single upstream call.
 func (r *Registry) Resolve(ctx context.Context, ch *Channel) (*f1net.Stream, error) {
+	log := r.log(ctx)
 	r.mu.RLock()
 	c := r.cache[ch.ID]
 	r.mu.RUnlock()
 
 	if c.stream != nil && time.Since(c.at) < r.ttl {
+		log.Debug("resolution cache hit", "channel", ch.ID)
 		return c.stream, nil
 	}
 
+	log.Debug("resolving channel", "channel", ch.ID)
 	v, err, _ := r.group.Do(ch.ID, func() (any, error) {
 		return r.resolver.ResolveStream(ctx, ch.Source, ch.Quality)
 	})
@@ -120,9 +145,13 @@ func (r *Registry) Resolve(ctx context.Context, ch *Channel) (*f1net.Stream, err
 
 	if err != nil {
 		if c.stream != nil {
+			log.Warn("resolution failed, using cached stream",
+				"channel", ch.ID, "error", err, "age", time.Since(c.at).String())
 			return c.stream, nil
 		}
+		log.Warn("resolution failed", "channel", ch.ID, "error", err)
 		return nil, err
 	}
+	log.Debug("resolved channel", "channel", ch.ID, "quality", st.Quality)
 	return st, nil
 }

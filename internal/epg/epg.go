@@ -13,6 +13,7 @@ import (
 	"sync"
 	"time"
 
+	"f1-jf/internal/ctxlog"
 	"f1-jf/internal/iptv"
 )
 
@@ -56,7 +57,7 @@ type Service struct {
 	year   int
 	ttl    time.Duration
 	client *http.Client
-	log    *slog.Logger
+	logger *slog.Logger
 
 	mu       sync.Mutex
 	cached   *Schedule
@@ -90,33 +91,47 @@ func New(opts Options) *Service {
 		year:   opts.Year,
 		ttl:    opts.TTL,
 		client: opts.HTTPClient,
-		log:    opts.Logger,
+		logger: opts.Logger,
 		now:    opts.Now,
 	}
+}
+
+// log returns the request-scoped logger from ctx (carrying a request_id) when
+// present, otherwise the service's own logger.
+func (s *Service) log(ctx context.Context) *slog.Logger {
+	if lg := ctxlog.From(ctx); lg != nil {
+		return lg
+	}
+	return s.logger
 }
 
 // Schedule returns the season calendar, re-fetching once the cache is older
 // than the TTL and falling back to the last good calendar on fetch errors.
 func (s *Service) Schedule(ctx context.Context) (*Schedule, error) {
+	log := s.log(ctx)
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
 	if s.cached != nil && time.Since(s.cachedAt) < s.ttl {
+		log.Debug("epg cache hit", "year", s.year)
 		return s.cached, nil
 	}
 
+	log.Debug("refreshing epg calendar", "year", s.year)
 	sched, err := s.fetch(ctx)
 	if err != nil {
 		s.lastErr = err
 		if s.cached != nil {
-			s.log.Warn("epg refresh failed, using cached calendar", "error", err)
+			log.Warn("epg refresh failed, using cached calendar", "year", s.year, "error", err)
 			return s.cached, nil
 		}
+		log.Warn("epg fetch failed", "year", s.year, "error", err)
 		return nil, err
 	}
 	s.cached = sched
 	s.cachedAt = time.Now()
 	s.lastErr = nil
+	log.Debug("epg calendar refreshed", "year", s.year, "programmes", len(sched.Programmes))
 	return sched, nil
 }
 

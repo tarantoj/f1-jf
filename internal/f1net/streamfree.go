@@ -62,9 +62,11 @@ func (streamfreeResolver) resolve(ctx context.Context, c *Client, src Source, u 
 	// External streams point straight at a URL and need no token building.
 	sk, err := fetchStreamKey(ctx, c, origin, key)
 	if err != nil {
+		c.log(ctx).Warn("stream key failed", "source", src.Name, "error", err)
 		return nil, err
 	}
 	if sk.IsExternal && sk.ExternalURL != "" {
+		c.log(ctx).Debug("external stream", "source", src.Name)
 		return &Stream{
 			Name:        src.Name,
 			Source:      src.URL,
@@ -76,22 +78,28 @@ func (streamfreeResolver) resolve(ctx context.Context, c *Client, src Source, u 
 
 	status, err := fetchStreamStatus(ctx, c, origin, key)
 	if err != nil {
+		c.log(ctx).Warn("stream status failed", "source", src.Name, "error", err)
 		return nil, err
 	}
 	q, err := pickQuality(quality, status.Qualities)
 	if err != nil {
+		c.log(ctx).Warn("no usable quality", "source", src.Name, "requested", quality)
 		return nil, fmt.Errorf("%w: %s", ErrStreamOffline, err)
 	}
 
 	tokens, err := fetchTokens(ctx, c, c.http(), c.userAgent(), src.URL)
 	if err != nil {
+		c.log(ctx).Warn("token extraction failed", "source", src.Name, "error", err)
 		return nil, fmt.Errorf("%w: extract tokens: %v", ErrStreamOffline, err)
 	}
 	t, ok := tokens[q]
 	if !ok {
+		c.log(ctx).Warn("missing token", "source", src.Name, "quality", q)
 		return nil, fmt.Errorf("%w: no token for quality %s", ErrStreamOffline, q)
 	}
 	if tokenExpired(t) {
+		c.log(ctx).Warn("token expired", "source", src.Name, "quality", q,
+			"expires", time.Unix(t.Expires, 0).UTC())
 		return nil, fmt.Errorf("%w: %w: token for quality %s expired at %s",
 			ErrStreamOffline, ErrTokenExpired, q, time.Unix(t.Expires, 0).UTC())
 	}

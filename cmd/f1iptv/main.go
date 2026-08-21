@@ -42,8 +42,8 @@ func run() error {
 	logger := newLogger(cfg.LogLevel)
 	slog.SetDefault(logger)
 
-	f1 := &f1net.Client{VerifyPlaylist: cfg.VerifyPlaylist}
-	registry := iptv.NewRegistry(f1, cfg.ResolutionTTL)
+	f1 := &f1net.Client{VerifyPlaylist: cfg.VerifyPlaylist, Logger: logger}
+	registry := iptv.NewRegistryLogger(f1, cfg.ResolutionTTL, logger)
 
 	channels, err := iptv.ChannelsFromQualities(cfg.Qualities, cfg.Group, f1net.Source{Name: "F1", URL: cfg.SourceURL})
 	if err != nil {

@@ -36,7 +36,7 @@ func (s *Server) handleGuide(w http.ResponseWriter, r *http.Request) {
 	}
 	doc, err := s.epg.RenderXML(r.Context(), s.channels)
 	if err != nil {
-		s.log.Warn("render guide", "error", err)
+		s.logger(r.Context()).Warn("render guide", "error", err)
 		http.Error(w, "guide unavailable", http.StatusServiceUnavailable)
 		return
 	}
@@ -53,7 +53,7 @@ func (s *Server) handlePlaylist(w http.ResponseWriter, r *http.Request) {
 	for _, ch := range s.channels {
 		st, err := s.registry.Resolve(r.Context(), ch)
 		if err != nil || st == nil {
-			s.log.Warn("channel offline", "channel", ch.ID, "error", err)
+			s.logger(r.Context()).Warn("channel offline", "channel", ch.ID, "error", err)
 			continue
 		}
 		fmt.Fprintf(&b, `#EXTINF:-1 tvg-id=%q tvg-name=%q group-title=%q,%s`+"\n",
@@ -94,7 +94,7 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 
 	up, err := s.upstream.Fetch(r.Context(), st.Headers, st.PlaylistURL, "")
 	if err != nil {
-		s.log.Warn("fetch playlist", "channel", ch.ID, "error", err)
+		s.logger(r.Context()).Warn("fetch playlist", "channel", ch.ID, "error", err)
 		http.Error(w, "upstream unreachable", http.StatusBadGateway)
 		return
 	}
@@ -107,9 +107,13 @@ func (s *Server) handleStream(w http.ResponseWriter, r *http.Request) {
 // new segments appear. The response is chunked and has no Content-Length.
 func (s *Server) serveRawTS(w http.ResponseWriter, r *http.Request, ch *iptv.Channel, st *f1net.Stream) {
 	ctx := r.Context()
+	log := s.logger(ctx)
 	w.Header().Set("Content-Type", "video/mp2t")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.WriteHeader(http.StatusOK)
+
+	start := time.Now()
+	log.Info("stream started", "channel", ch.ID, "quality", st.Quality)
 
 	sent := make(map[string]bool)
 	// Wrap the writer so bytes are flushed continuously during segment
@@ -120,9 +124,9 @@ func (s *Server) serveRawTS(w http.ResponseWriter, r *http.Request, ch *iptv.Cha
 		if err := s.streamTSWindow(ctx, st, sent, bw); err != nil {
 			bw.Flush()
 			if ctx.Err() != nil {
-				return
+				break
 			}
-			s.log.Warn("ts stream", "channel", ch.ID, "error", err)
+			log.Warn("ts stream", "channel", ch.ID, "error", err)
 			select {
 			case <-ctx.Done():
 				return
@@ -133,10 +137,15 @@ func (s *Server) serveRawTS(w http.ResponseWriter, r *http.Request, ch *iptv.Cha
 		bw.Flush()
 		select {
 		case <-ctx.Done():
+			bw.Flush()
+			log.Info("stream ended", "channel", ch.ID, "quality", st.Quality,
+				"duration", time.Since(start).String(), "segments", len(sent))
 			return
 		case <-time.After(2 * time.Second):
 		}
 	}
+	log.Info("stream ended", "channel", ch.ID, "quality", st.Quality,
+		"duration", time.Since(start).String(), "segments", len(sent))
 }
 
 // flushWriter flushes the underlying http.ResponseWriter after every Write so
@@ -191,7 +200,7 @@ func (s *Server) streamTSWindow(ctx context.Context, st *f1net.Stream, sent map[
 		segURL := hlsproxy.ResolveUpstream(st.PlaylistURL, seg.URI)
 		segUp, err := s.upstream.Fetch(ctx, st.Headers, segURL, "")
 		if err != nil {
-			s.log.Warn("ts segment", "error", err)
+			s.logger(ctx).Warn("ts segment", "error", err)
 			continue
 		}
 		_, copyErr := io.Copy(w, segUp.Body)
@@ -231,7 +240,7 @@ func (s *Server) handleFetch(w http.ResponseWriter, r *http.Request) {
 
 	up, err := s.upstream.Fetch(r.Context(), st.Headers, upstream, r.Header.Get("Range"))
 	if err != nil {
-		s.log.Warn("fetch upstream", "channel", ch.ID, "error", err)
+		s.logger(r.Context()).Warn("fetch upstream", "channel", ch.ID, "error", err)
 		http.Error(w, "upstream unreachable", http.StatusBadGateway)
 		return
 	}
@@ -249,7 +258,7 @@ func (s *Server) serveUpstream(w http.ResponseWriter, r *http.Request, ch *iptv.
 	if up.IsPlaylist(prefix) {
 		content, err := io.ReadAll(io.LimitReader(br, hlsproxy.MaxPlaylistBytes))
 		if err != nil {
-			s.log.Warn("read playlist", "channel", ch.ID, "error", err)
+			s.logger(r.Context()).Warn("read playlist", "channel", ch.ID, "error", err)
 			http.Error(w, "read upstream", http.StatusBadGateway)
 			return
 		}

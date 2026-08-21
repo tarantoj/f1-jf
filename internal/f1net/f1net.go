@@ -8,10 +8,13 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"log/slog"
 	"net/http"
 	"net/url"
 	"strings"
 	"time"
+
+	"f1-jf/internal/ctxlog"
 )
 
 const (
@@ -45,6 +48,21 @@ type Client struct {
 	// VerifyPlaylist performs a GET on the resolved m3u8 (with the
 	// required headers) to confirm it is reachable before returning it.
 	VerifyPlaylist bool
+
+	// Logger receives diagnostics. Defaults to slog.Default().
+	Logger *slog.Logger
+}
+
+// log returns the request-scoped logger from ctx (carrying a request_id) when
+// present, otherwise the client's own logger.
+func (c *Client) log(ctx context.Context) *slog.Logger {
+	if lg := ctxlog.From(ctx); lg != nil {
+		return lg
+	}
+	if c.Logger != nil {
+		return c.Logger
+	}
+	return slog.Default()
 }
 
 func (c *Client) http() *http.Client {
@@ -105,7 +123,12 @@ func (c *Client) ListSources(ctx context.Context) ([]Source, error) {
 	if resp.StatusCode != http.StatusOK {
 		return nil, fmt.Errorf("source list: unexpected status %s", resp.Status)
 	}
-	return parseSources(resp.Body)
+	sources, err := parseSources(resp.Body)
+	if err != nil {
+		return nil, err
+	}
+	c.log(ctx).Debug("fetched source list", "count", len(sources))
+	return sources, nil
 }
 
 // ResolveStream resolves a single embed source into an m3u8 playlist.
@@ -131,6 +154,8 @@ func (c *Client) ResolveStream(ctx context.Context, src Source, quality string) 
 			return nil, err
 		}
 	}
+	c.log(ctx).Debug("resolved stream",
+		"source", src.Name, "host", u.Hostname(), "quality", stream.Quality)
 	return stream, nil
 }
 
@@ -176,10 +201,12 @@ func (c *Client) checkPlaylist(ctx context.Context, st *Stream) error {
 	}
 	resp, err := c.http().Do(req)
 	if err != nil {
+		c.log(ctx).Warn("playlist verify failed", "source", st.Name, "error", err)
 		return err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
+		c.log(ctx).Warn("playlist verify rejected", "source", st.Name, "status", resp.Status)
 		return fmt.Errorf("%w: %s", ErrStreamOffline, resp.Status)
 	}
 	return nil

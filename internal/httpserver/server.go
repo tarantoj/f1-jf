@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strings"
 
+	"f1-jf/internal/ctxlog"
 	"f1-jf/internal/hlsproxy"
 	"f1-jf/internal/iptv"
 )
@@ -57,7 +58,7 @@ func New(registry *iptv.Registry, channels []*iptv.Channel, opts Options) *Serve
 		s.log = slog.Default()
 	}
 	if s.upstream == nil {
-		s.upstream = hlsproxy.NewClient(nil)
+		s.upstream = hlsproxy.NewClientLogger(nil, s.log)
 	}
 	return s
 }
@@ -73,4 +74,13 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /iptv/f/{channel}/{path...}", s.handleFetch)
 	mux.HandleFunc("GET /iptv/guide.xml", s.handleGuide)
 	return withMiddleware(s.log, mux)
+}
+
+// logger returns the request-scoped logger from ctx (carrying a request_id)
+// when present, otherwise the server's own logger.
+func (s *Server) logger(ctx context.Context) *slog.Logger {
+	if lg := ctxlog.From(ctx); lg != nil {
+		return lg
+	}
+	return s.log
 }
