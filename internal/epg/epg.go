@@ -165,11 +165,11 @@ func buildSchedule(sessions []Session, meetings []Meeting, year int) (*Schedule,
 		if sn.SessionType == "Testing" || strings.Contains(strings.ToLower(meeting), "testing") {
 			continue
 		}
-		start, err := parseRFC3339(sn.DateStart)
+		start, err := time.Parse(time.RFC3339, sn.DateStart)
 		if err != nil {
 			return nil, fmt.Errorf("parse start %q: %w", sn.DateStart, err)
 		}
-		stop, err := parseRFC3339(sn.DateEnd)
+		stop, err := time.Parse(time.RFC3339, sn.DateEnd)
 		if err != nil {
 			return nil, fmt.Errorf("parse end %q: %w", sn.DateEnd, err)
 		}
@@ -190,16 +190,12 @@ func (s *Service) RenderXML(ctx context.Context, channels []*iptv.Channel) ([]by
 		return nil, err
 	}
 
-	chs := make([]xmltvChannel, 0, len(channels))
-	for _, ch := range channels {
-		chs = append(chs, xmltvChannel{ID: ch.ID, Name: ch.Name})
-	}
-	progs := make([]xmltvProgramme, 0, len(sched.Programmes))
+	progs := make([]Programme, 0, len(sched.Programmes))
 	for _, p := range sched.Programmes {
 		if !p.Stop.After(s.now()) {
 			continue
 		}
-		progs = append(progs, xmltvProgramme(p))
+		progs = append(progs, p)
 	}
-	return xmltvDoc(chs, progs), nil
+	return xmltvDoc(channels, progs), nil
 }

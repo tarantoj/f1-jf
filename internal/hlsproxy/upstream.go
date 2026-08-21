@@ -27,14 +27,8 @@ type Client struct {
 }
 
 // NewClient returns a Client using hc, or a default client with a 2 minute
-// timeout when hc is nil.
-func NewClient(hc *http.Client) *Client {
-	return NewClientLogger(hc, nil)
-}
-
-// NewClientLogger is NewClient with an explicit logger (defaults to
-// slog.Default()).
-func NewClientLogger(hc *http.Client, logger *slog.Logger) *Client {
+// timeout when hc is nil, and logger, or slog.Default() when nil.
+func NewClient(hc *http.Client, logger *slog.Logger) *Client {
 	if hc == nil {
 		hc = &http.Client{Timeout: 2 * time.Minute}
 	}

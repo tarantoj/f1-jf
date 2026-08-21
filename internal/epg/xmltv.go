@@ -3,15 +3,16 @@ package epg
 import (
 	"bytes"
 	"encoding/xml"
-	"time"
 
 	"github.com/sherif-fanous/xmltv"
+
+	"f1-jf/internal/iptv"
 )
 
 // xmltvDoc renders a full XMLTV document for the given channels. Every
 // programme is listed under every channel because they all carry the same
 // live feed.
-func xmltvDoc(channels []xmltvChannel, programmes []xmltvProgramme) []byte {
+func xmltvDoc(channels []*iptv.Channel, programmes []Programme) []byte {
 	tv := xmltv.TV{
 		GeneratorInfoName: ptr("f1-jf"),
 		Channels:          make([]xmltv.Channel, 0, len(channels)),
@@ -52,18 +53,6 @@ func xmltvDoc(channels []xmltvChannel, programmes []xmltvProgramme) []byte {
 		return []byte(xml.Header + "</tv>\n")
 	}
 	return b.Bytes()
-}
-
-type xmltvChannel struct {
-	ID   string
-	Name string
-}
-
-type xmltvProgramme struct {
-	Start time.Time
-	Stop  time.Time
-	Title string
-	Desc  string
 }
 
 // ptr returns a pointer to v, for the library's pointer-typed fields.

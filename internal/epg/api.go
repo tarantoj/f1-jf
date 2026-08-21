@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"time"
 
 	"f1-jf/internal/httpx"
 )
@@ -48,9 +47,4 @@ func fetchMeetings(ctx context.Context, c *http.Client, baseURL string, year int
 		return nil, fmt.Errorf("meetings: %w", err)
 	}
 	return out, nil
-}
-
-// parseRFC3339 parses an ISO-8601 timestamp from the API.
-func parseRFC3339(s string) (time.Time, error) {
-	return time.Parse(time.RFC3339, s)
 }

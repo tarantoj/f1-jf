@@ -43,7 +43,7 @@ func run() error {
 	slog.SetDefault(logger)
 
 	f1 := &f1net.Client{BaseURL: cfg.DashboardURL, VerifyPlaylist: cfg.VerifyPlaylist, Logger: logger}
-	registry := iptv.NewRegistryLogger(iptv.NewFallbackResolver(f1, f1, cfg.ResolutionTTL, logger), cfg.ResolutionTTL, logger)
+	registry := iptv.NewRegistry(iptv.NewFallbackResolver(f1, f1, cfg.ResolutionTTL, logger), cfg.ResolutionTTL, logger)
 
 	var qualities []string
 	for _, q := range strings.Split(cfg.Qualities, ",") {

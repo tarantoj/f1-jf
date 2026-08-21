@@ -255,7 +255,7 @@ func TestFallbackRefreshedSources(t *testing.T) {
 
 func TestRegistryCachesWithinTTL(t *testing.T) {
 	res := &countingResolver{ok: true}
-	reg := NewRegistry(res, time.Hour)
+	reg := NewRegistry(res, time.Hour, nil)
 	ch := &Channel{ID: "f1", Qualities: []string{"1080p"}}
 
 	if _, err := reg.Resolve(context.Background(), ch); err != nil {
@@ -271,7 +271,7 @@ func TestRegistryCachesWithinTTL(t *testing.T) {
 
 func TestRegistryExpiresAfterTTL(t *testing.T) {
 	res := &countingResolver{ok: true}
-	reg := NewRegistry(res, time.Millisecond)
+	reg := NewRegistry(res, time.Millisecond, nil)
 	ch := &Channel{ID: "f1", Qualities: []string{"1080p"}}
 
 	reg.Resolve(context.Background(), ch)
@@ -285,7 +285,7 @@ func TestRegistryExpiresAfterTTL(t *testing.T) {
 
 func TestRegistryLastGoodFallback(t *testing.T) {
 	res := &countingResolver{ok: true}
-	reg := NewRegistry(res, time.Millisecond)
+	reg := NewRegistry(res, time.Millisecond, nil)
 	ch := &Channel{ID: "f1", Qualities: []string{"1080p"}}
 
 	st, err := reg.Resolve(context.Background(), ch)
@@ -306,7 +306,7 @@ func TestRegistryLastGoodFallback(t *testing.T) {
 
 func TestRegistryNoFallbackWithoutCache(t *testing.T) {
 	res := &countingResolver{ok: false}
-	reg := NewRegistry(res, time.Hour)
+	reg := NewRegistry(res, time.Hour, nil)
 	ch := &Channel{ID: "f1", Qualities: []string{"1080p"}}
 
 	if _, err := reg.Resolve(context.Background(), ch); err == nil {
@@ -316,7 +316,7 @@ func TestRegistryNoFallbackWithoutCache(t *testing.T) {
 
 func TestRegistryRefresh(t *testing.T) {
 	res := &countingResolver{ok: true}
-	reg := NewRegistry(res, time.Hour)
+	reg := NewRegistry(res, time.Hour, nil)
 	ch := &Channel{ID: "f1", Qualities: []string{"1080p"}}
 
 	if _, err := reg.Resolve(context.Background(), ch); err != nil {

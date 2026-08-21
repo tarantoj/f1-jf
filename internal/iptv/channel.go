@@ -183,13 +183,7 @@ type cachedStream struct {
 	at     time.Time
 }
 
-func NewRegistry(resolver Resolver, ttl time.Duration) *Registry {
-	return NewRegistryLogger(resolver, ttl, nil)
-}
-
-// NewRegistryLogger is NewRegistry with an explicit logger (defaults to
-// slog.Default()).
-func NewRegistryLogger(resolver Resolver, ttl time.Duration, logger *slog.Logger) *Registry {
+func NewRegistry(resolver Resolver, ttl time.Duration, logger *slog.Logger) *Registry {
 	if ttl <= 0 {
 		ttl = 30 * time.Second
 	}

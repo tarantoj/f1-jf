@@ -58,7 +58,7 @@ func New(registry *iptv.Registry, channels []*iptv.Channel, opts Options) *Serve
 		s.log = slog.Default()
 	}
 	if s.upstream == nil {
-		s.upstream = hlsproxy.NewClientLogger(nil, s.log)
+		s.upstream = hlsproxy.NewClient(nil, s.log)
 	}
 	return s
 }

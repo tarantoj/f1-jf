@@ -67,17 +67,17 @@ func RewritePlaylist(content []byte, upstreamBase, pubBase, channel string) []by
 func rewriteURI(upstreamBase, pubBase, channel, raw string) string {
 	up := raw
 	if !strings.HasPrefix(raw, "http://") && !strings.HasPrefix(raw, "https://") {
-		up = resolveUpstream(upstreamBase, raw)
+		up = ResolveUpstream(upstreamBase, raw)
 	}
 	return pubBase + "/iptv/f/" + channel + "/stream.ts?u=" + url.QueryEscape(up)
 }
 
-// resolveUpstream resolves a possibly-relative URI against a playlist URL.
+// ResolveUpstream resolves a possibly-relative URI against a playlist URL.
 // Absolute (scheme-qualified) URIs are returned unchanged; host-relative
 // URIs resolve against the playlist host; other relative URIs resolve against
 // the playlist's directory (not the playlist file itself) and never inherit
 // the playlist's query tokens.
-func resolveUpstream(playlistURL, raw string) string {
+func ResolveUpstream(playlistURL, raw string) string {
 	if strings.HasPrefix(raw, "http://") || strings.HasPrefix(raw, "https://") {
 		return raw
 	}
@@ -97,10 +97,4 @@ func resolveUpstream(playlistURL, raw string) string {
 	u.Path = strings.TrimSuffix(dir, "/") + "/" + raw
 	u.RawQuery = ""
 	return u.String()
-}
-
-// ResolveUpstream resolves a (possibly relative) segment URI against a
-// playlist URL, returning an absolute upstream URL suitable for Fetch.
-func ResolveUpstream(playlistURL, raw string) string {
-	return resolveUpstream(playlistURL, raw)
 }

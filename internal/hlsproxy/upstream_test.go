@@ -29,7 +29,7 @@ func TestFetchSendsHeadersAndRange(t *testing.T) {
 	headers.Set("Origin", "https://upstream.test")
 	headers.Set("User-Agent", "test-agent")
 
-	resp, err := NewClient(srv.Client()).Fetch(context.Background(), headers, srv.URL+"/seg.js", "bytes=0-2")
+	resp, err := NewClient(srv.Client(), nil).Fetch(context.Background(), headers, srv.URL+"/seg.js", "bytes=0-2")
 	if err != nil {
 		t.Fatalf("Fetch: %v", err)
 	}
@@ -65,7 +65,7 @@ func TestFetchRejectsErrorStatus(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	_, err := NewClient(srv.Client()).Fetch(context.Background(), http.Header{}, srv.URL, "")
+	_, err := NewClient(srv.Client(), nil).Fetch(context.Background(), http.Header{}, srv.URL, "")
 	if err == nil {
 		t.Fatal("expected error for 503")
 	}

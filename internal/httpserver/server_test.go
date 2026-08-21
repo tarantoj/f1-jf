@@ -238,8 +238,8 @@ func newServerWithLogger(t *testing.T, logger *slog.Logger, build func(up *httpt
 // upstream mock.
 func newServerFrom(t *testing.T, logger *slog.Logger, resolver iptv.Resolver, channels []*iptv.Channel, up *httptest.Server, epg ...EPGRenderer) (*httptest.Server, *httptest.Server) {
 	t.Helper()
-	reg := iptv.NewRegistry(resolver, 0)
-	opts := Options{Logger: logger, Upstream: hlsproxy.NewClient(up.Client())}
+	reg := iptv.NewRegistry(resolver, 0, nil)
+	opts := Options{Logger: logger, Upstream: hlsproxy.NewClient(up.Client(), nil)}
 	if len(epg) > 0 {
 		opts.EPG = epg[0]
 	}
