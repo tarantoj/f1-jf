@@ -10,6 +10,7 @@ import (
 	"net/url"
 	"path"
 	"regexp"
+	"time"
 
 	"golang.org/x/net/html"
 )
@@ -30,15 +31,6 @@ var (
 	// qualityPref matches the player's own auto-quality preference order.
 	qualityPref = []string{"720p", "1080p", "2160p", "540p"}
 )
-
-// defaultTokens are the _0x tokens captured when the page's own copy could
-// not be extracted; they must match what the live embed serves.
-var defaultTokens = map[string]qualityToken{
-	"540p":  {Expires: 1786778988, Nonce: "a78e112785e81d85", Token: "hPR1k3Ozzj2z_AgryyUFnQ"},
-	"720p":  {Expires: 1786778988, Nonce: "a78e112785e81d85", Token: "7nd4GyPtWLteWsFrcm6Xdw"},
-	"1080p": {Expires: 1786778988, Nonce: "a78e112785e81d85", Token: "TQy82_FCjaZ9m9PxWhjd5A"},
-	"2160p": {Expires: 1786778988, Nonce: "a78e112785e81d85", Token: "b0YhD0Vi_qA7LLblTFrGgA"},
-}
 
 // qualityToken is a single entry of the embed's _0x map.
 type qualityToken struct {
@@ -93,11 +85,15 @@ func (streamfreeResolver) resolve(ctx context.Context, c *Client, src Source, u 
 
 	tokens, err := fetchTokens(ctx, c, c.http(), c.userAgent(), src.URL)
 	if err != nil {
-		tokens = defaultTokens
+		return nil, fmt.Errorf("%w: extract tokens: %v", ErrStreamOffline, err)
 	}
 	t, ok := tokens[q]
 	if !ok {
-		t = defaultTokens[q]
+		return nil, fmt.Errorf("%w: no token for quality %s", ErrStreamOffline, q)
+	}
+	if tokenExpired(t) {
+		return nil, fmt.Errorf("%w: %w: token for quality %s expired at %s",
+			ErrStreamOffline, ErrTokenExpired, q, time.Unix(t.Expires, 0).UTC())
 	}
 
 	playlist := origin + streamPath(sk.ServerName, key, q)
@@ -112,6 +108,12 @@ func (streamfreeResolver) resolve(ctx context.Context, c *Client, src Source, u 
 		Quality:     q,
 		Headers:     playbackHeaders(c, src.URL, origin),
 	}, nil
+}
+
+// tokenExpired reports whether the token's epoch expiry has passed. Tokens
+// with no expiry (_e = 0) are never considered expired.
+func tokenExpired(t qualityToken) bool {
+	return t.Expires != 0 && time.Now().Unix() >= t.Expires
 }
 
 // streamKey extracts the stream key from an embed URL like
@@ -183,8 +185,9 @@ func fetchStreamStatus(ctx context.Context, c *Client, origin, key string) (*str
 }
 
 // fetchTokens extracts the _0x token map from the embed page's <script>
-// blocks. It returns the default tokens if the page does not contain the map
-// (e.g. page changed).
+// blocks. It returns an error if the page cannot be fetched or does not
+// contain the map (e.g. page changed); callers must not fall back to
+// hardcoded tokens, which silently rot and get rejected upstream.
 func fetchTokens(ctx context.Context, c *Client, hc *http.Client, ua, embedURL string) (map[string]qualityToken, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, embedURL, nil)
 	if err != nil {

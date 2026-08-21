@@ -2,6 +2,7 @@ package f1net
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -9,22 +10,26 @@ import (
 	"testing"
 )
 
+// farFutureExpiry is an epoch well beyond "now" so fixture tokens are never
+// treated as expired by the resolver.
+const farFutureExpiry = int64(4102444800) // 2100-01-01
+
 // testServer serves a fake streamfree embed with a distinct _0x token map so
-// the tests prove the page is actually scraped rather than using the fallback.
+// the tests prove the page is actually scraped rather than using a fallback.
 func testServer(t *testing.T) *httptest.Server {
 	t.Helper()
 	mux := http.NewServeMux()
 
 	mux.HandleFunc("/embed/racing/skyf1", func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprint(w, `
+		fmt.Fprintf(w, `
 <!doctype html><html><body>
 <script>
-const _0x = {"540p": {"_e": 111, "_n": "n540", "_t": "t540"},
-             "720p": {"_e": 111, "_n": "n720", "_t": "t720"},
-             "1080p": {"_e": 111, "_n": "n1080", "_t": "t1080"},
-             "2160p": {"_e": 111, "_n": "n2160", "_t": "t2160"}};
+const _0x = {"540p": {"_e": %d, "_n": "n540", "_t": "t540"},
+             "720p": {"_e": %d, "_n": "n720", "_t": "t720"},
+             "1080p": {"_e": %d, "_n": "n1080", "_t": "t1080"},
+             "2160p": {"_e": %d, "_n": "n2160", "_t": "t2160"}};
 </script>
-</body></html>`)
+</body></html>`, farFutureExpiry, farFutureExpiry, farFutureExpiry, farFutureExpiry)
 	})
 
 	mux.HandleFunc("/api/stream-status/skyf1", func(w http.ResponseWriter, r *http.Request) {
@@ -62,7 +67,7 @@ func TestStreamfreeResolve(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolve: %v", err)
 	}
-	want := srv.URL + "/live/skyf1720p/index.m3u8?_t=t720&_e=111&_n=n720"
+	want := fmt.Sprintf("%s/live/skyf1720p/index.m3u8?_t=t720&_e=%d&_n=n720", srv.URL, farFutureExpiry)
 	if st.PlaylistURL != want {
 		t.Errorf("playlist = %q, want %q", st.PlaylistURL, want)
 	}
@@ -89,7 +94,7 @@ func TestStreamfreeResolveExplicitQuality(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolve: %v", err)
 	}
-	want := srv.URL + "/live/skyf11080p/index.m3u8?_t=t1080&_e=111&_n=n1080"
+	want := fmt.Sprintf("%s/live/skyf11080p/index.m3u8?_t=t1080&_e=%d&_n=n1080", srv.URL, farFutureExpiry)
 	if st.PlaylistURL != want {
 		t.Errorf("playlist = %q, want %q", st.PlaylistURL, want)
 	}
@@ -139,6 +144,69 @@ func TestStreamfreeResolveUnavailableQuality(t *testing.T) {
 	_, err := (streamfreeResolver{}).resolve(context.Background(), c, src, u, "")
 	if err == nil {
 		t.Fatal("expected ErrStreamOffline")
+	}
+	if !strings.Contains(err.Error(), ErrStreamOffline.Error()) {
+		t.Fatalf("error = %v, want ErrStreamOffline", err)
+	}
+}
+
+func TestStreamfreeResolveExpiredTokens(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/get-stream-key/skyf1":
+			fmt.Fprint(w, `{"stream_key":"skyf1","is_external":false,"server_name":"origin"}`)
+		case "/api/stream-status/skyf1":
+			fmt.Fprint(w, `{"qualities":{"720p":true,"1080p":true}}`)
+		case "/embed/racing/skyf1":
+			// The _0x map is present but every token is already expired.
+			fmt.Fprint(w, `
+<script>
+const _0x = {"720p": {"_e": 1, "_n": "n720", "_t": "t720"},
+             "1080p": {"_e": 1, "_n": "n1080", "_t": "t1080"}};
+</script>`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	c := &Client{HTTPClient: srv.Client()}
+	u := mustParse(t, srv.URL+"/embed/racing/skyf1")
+	src := Source{Name: "Expired", URL: srv.URL + "/embed/racing/skyf1"}
+
+	_, err := (streamfreeResolver{}).resolve(context.Background(), c, src, u, "")
+	if err == nil {
+		t.Fatal("expected error for expired tokens")
+	}
+	if !errors.Is(err, ErrTokenExpired) {
+		t.Fatalf("error = %v, want ErrTokenExpired", err)
+	}
+}
+
+func TestStreamfreeResolveScrapeFailure(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/get-stream-key/skyf1":
+			fmt.Fprint(w, `{"stream_key":"skyf1","is_external":false,"server_name":"origin"}`)
+		case "/api/stream-status/skyf1":
+			fmt.Fprint(w, `{"qualities":{"720p":true,"1080p":true}}`)
+		case "/embed/racing/skyf1":
+			// Page present but token map missing: extraction must fail loudly
+			// rather than fall back to hardcoded tokens.
+			http.Error(w, "gone", http.StatusGone)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	c := &Client{HTTPClient: srv.Client()}
+	u := mustParse(t, srv.URL+"/embed/racing/skyf1")
+	src := Source{Name: "ScrapeFail", URL: srv.URL + "/embed/racing/skyf1"}
+
+	_, err := (streamfreeResolver{}).resolve(context.Background(), c, src, u, "")
+	if err == nil {
+		t.Fatal("expected error when token scrape fails")
 	}
 	if !strings.Contains(err.Error(), ErrStreamOffline.Error()) {
 		t.Fatalf("error = %v, want ErrStreamOffline", err)

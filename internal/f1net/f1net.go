@@ -26,6 +26,7 @@ var (
 	ErrNoSources       = errors.New("no streams found")
 	ErrUnsupportedHost = errors.New("unsupported embed host")
 	ErrStreamOffline   = errors.New("stream offline")
+	ErrTokenExpired    = errors.New("token expired")
 )
 
 // Client fetches and resolves F1 streams.
